@@ -1,0 +1,26 @@
+# THE CHART'S OWN CI VALUES OVERRIDE, read by every shared gate that renders or
+# lints this chart offline (`scripts/chart_values_override.py` in
+# yadgarhq/actions). Without it the chart renders NOTHING — `registry` is absent
+# by default (ADR-0857 expand step) — and the shared gates would check an empty
+# render. So it declares a real registry and both TLS Secrets, and the gates see
+# the Job, the ConfigMap and every mount.
+#
+# Two roots, the second carrying ledger 1244's option B (`estate/smoke`, a
+# two-segment path under the root `estate`).
+project:
+  tls:
+    caSecret: project-tls
+    clientCertSecret: seeder-client-tls
+registry:
+  roots:
+    - path: yadgarhq
+      sourceRepo: yadgarhq/argocd
+    - path: estate
+      sourceRepo: yadgarhq/estate
+  projects:
+    - path: yadgarhq/gateway
+      displayName: gateway
+      sourceRepo: yadgarhq/gateway
+    - path: estate/smoke
+      sourceRepo: yadgarhq/estate
+  allowMassArchive: false

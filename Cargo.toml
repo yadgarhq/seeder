@@ -1,0 +1,73 @@
+[package]
+name = "yadgar-seeder"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "Apache-2.0"
+description = "The D35 seeder: writes the organisation's declared registry, serving no RPC."
+
+[dependencies]
+# A CLIENT ONLY. This binary serves no RPC: it runs once as a Job, sends one
+# `ProjectService.SyncProjects` to `project`, and exits (ADR-0936, ADR-0940).
+# NO sqlx and NO yadgar-store, and that absence is the design: no module talks
+# to a `-db` or its engine directly (ADR-0936, ADR-0938).
+tonic = { version = "0.14", default-features = false, features = [
+  "codegen",
+  "channel",
+  "transport",
+  # `server` and `router` for the generated server half, which only the test
+  # suite's fake ProjectService uses (see build.rs). `yadgar-lifecycle`'s
+  # `serve-tls` feature links tonic's server already, so this adds no crate.
+  "server",
+  "router",
+  # `tls-ring`, NOT `tls-aws-lc`: the binary builds for
+  # x86_64-unknown-linux-musl (D63), and `ring` is the provider yadgar-dial
+  # picks, so feature unification cannot ask for both. Named here rather than
+  # inherited, because this crate dials TLS of its own.
+  "tls-ring",
+] }
+tonic-prost = "0.14"
+prost = "0.14"
+prost-types = "0.14"
+# Client-side balancing over `project`'s headless Service (D23), and the
+# request-timeout knob's range check. Pinned by tag per ADR-0526, the same tag
+# `project` pins.
+yadgar-dial = { git = "https://github.com/yadgarhq/dial.git", tag = "v0.2.20" }
+# `serve_tls::leaf_common_name`: the boot check that the mounted client leaf is
+# the seeder's (`seeder-caller`) reads the common name the same way `project`'s
+# caller check does, with the one parser the estate shares. The `serve-tls`
+# feature is the one that carries it; nothing here serves.
+yadgar-lifecycle = { git = "https://github.com/yadgarhq/lifecycle.git", tag = "v0.2.23", default-features = false, features = ["serve-tls"] }
+# The estate's one error-chain walker (ADR-0591), so a refusal printed at exit
+# carries the layer below tonic's two-word `transport error`.
+yadgar-telemetry = { git = "https://github.com/yadgarhq/telemetry.git", tag = "v0.2.0" }
+# PEM decoding of the client leaf for the boot check above. Already in the lock
+# graph through rustls.
+rustls-pki-types = { version = "1", features = ["std"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# The per-sync request_id the seeder mints itself (ADR-0942). v7, the version
+# the gateway mints with, so ids from both minting sites sort by time alike.
+uuid = { version = "1", features = ["v7"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "sync"] }
+# `tests/` serves a fake ProjectService on loopback, BOUND before it is
+# served, so no other process can take the port in between.
+tokio-stream = { version = "0.1", features = ["net"] }
+# Certificates MINTED PER RUN rather than checked in: a fixture key in the
+# repository is a secret in the repository.
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }

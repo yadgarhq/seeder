@@ -1,0 +1,26 @@
+{{- if include "seeder.declared" . }}
+{{- /*
+THE DECLARATION, RENDERED FROM THE ADOPTER'S `registry` VALUES (ADR-0705: the
+organisation's GitOps repository is authoritative; a sync overwrites). The
+seeder reads it from this ConfigMap and checks it again, so a hand-edited copy
+is refused too. Every rule is in `templates/render-checks.yaml`.
+
+BUILT KEY BY KEY rather than `toJson .Values.registry`, so the document carries
+exactly the keys the binary reads — `displayName` always present, `""` when the
+values leave it out (an empty name is a legal declaration).
+
+WAVE "1", the same as the Job: everything unannotated is wave 0, and Argo gates
+wave 1 on wave 0 being healthy, which includes `project` and `project-db`.
+*/}}
+{{- $doc := include "seeder.registryJson" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Chart.Name }}-registry
+  labels:
+    app: {{ .Chart.Name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+data:
+  registry.json: {{ $doc | quote }}
+{{- end }}

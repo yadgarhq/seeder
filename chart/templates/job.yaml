@@ -1,0 +1,119 @@
+{{- if include "seeder.declared" . }}
+{{- /*
+ONE SYNC PER ARGO SYNC, AND NO CRONJOB (ADR-0940). The declaration changes only
+by a commit, a commit re-renders this Job, and the run is idempotent by
+convergence, so a re-run with nothing changed reports every row `unchanged`.
+
+THE ANNOTATIONS ARE `argocd/manifests/tls/ca-preflight.yaml`'s, the estate's
+pattern for a Job Argo re-runs:
+- `sync-wave: "1"`: Argo gates wave 1 on wave 0 being healthy, and wave 0 holds
+  `project` and `project-db`.
+- `Replace=true,Force=true`: a Job's pod template is immutable, so an in-place
+  apply fails; Argo deletes and re-creates it instead, which re-runs the sync.
+NO `ttlSecondsAfterFinished`: Argo re-creates a managed Job the TTL controller
+deleted, which would re-run the sync outside any commit.
+
+A FAILED JOB STAYS `Failed`. The Application reports Degraded and the ADR-0831
+cold-install proof fails on it; nothing is silent.
+
+THE POD LABEL `app: seeder` IS LOAD-BEARING: `project`'s ingress NetworkPolicy
+admits `podSelector: {matchLabels: {app: <client>}}` for each name in its
+`networkPolicy.clients`, and the estate adds `seeder` there (plan stage 7).
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Chart.Name }}
+  labels:
+    app: {{ .Chart.Name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    argocd.argoproj.io/sync-options: Replace=true,Force=true
+spec:
+  backoffLimit: {{ required "job.backoffLimit bounds the pod retries of one sync; see the chart's values.yaml" .Values.job.backoffLimit }}
+  activeDeadlineSeconds: {{ required "job.activeDeadlineSeconds bounds one sync's whole run; see the chart's values.yaml" .Values.job.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}
+    spec:
+      serviceAccountName: {{ .Chart.Name }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}{{ if .Values.image.digest }}@{{ .Values.image.digest }}{{ else }}:{{ .Values.image.tag }}{{ end }}"
+          imagePullPolicy: Always
+          args: ["sync-projects"]
+          env:
+            # The only upstream: project, never project-db (ADR-0936).
+            - name: PROJECT_HOST
+              value: {{ required "project.host names project's headless Service; see the chart's values.yaml" .Values.project.host | quote }}
+            - name: PROJECT_PORT
+              value: {{ required "project.port is project's gRPC port, 50052; see the chart's values.yaml" .Values.project.port | quote }}
+            - name: PROJECT_REQUEST_TIMEOUT_SECONDS
+              value: {{ .Values.project.requestTimeoutSeconds | quote }}
+            - name: PROJECT_TLS_CA_FILE
+              value: /var/run/config/project-ca/ca.pem
+            - name: PROJECT_TLS_CLIENT_CERT_FILE
+              value: /var/run/secrets/client-cert/client.crt
+            - name: PROJECT_TLS_CLIENT_KEY_FILE
+              value: /var/run/secrets/client-cert/client.key
+            {{- with .Values.project.tls.domain }}
+            - name: PROJECT_TLS_DOMAIN
+              value: {{ . | quote }}
+            {{- end }}
+            - name: SEEDER_REGISTRY_FILE
+              value: /etc/seeder/registry.json
+            - name: SEEDER_SYNC_ATTEMPTS
+              value: {{ .Values.sync.attempts | quote }}
+            - name: SEEDER_SYNC_BACKOFF_SECONDS
+              value: {{ .Values.sync.backoffSeconds | quote }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: registry
+              mountPath: /etc/seeder
+              readOnly: true
+            - name: project-ca
+              mountPath: /var/run/config/project-ca
+              readOnly: true
+            - name: client-cert
+              mountPath: /var/run/secrets/client-cert
+              readOnly: true
+      volumes:
+        - name: registry
+          configMap:
+            name: {{ .Chart.Name }}-registry
+            items:
+              - key: registry.json
+                path: registry.json
+        # NOT `optional`: without the authority or the leaf the seeder can do
+        # nothing, so the pod waits for both Secrets rather than starting and
+        # failing. `activeDeadlineSeconds` bounds the wait.
+        - name: project-ca
+          secret:
+            secretName: {{ .Values.project.tls.caSecret }}
+            items:
+              - key: {{ required "project.tls.caSecretKey names the key inside project.tls.caSecret that holds the CA bundle; see the chart's values.yaml" .Values.project.tls.caSecretKey | quote }}
+                path: ca.pem
+        - name: client-cert
+          secret:
+            secretName: {{ .Values.project.tls.clientCertSecret }}
+            items:
+              - key: {{ required "project.tls.clientCertSecretKey names the key inside project.tls.clientCertSecret that holds the client certificate; see the chart's values.yaml" .Values.project.tls.clientCertSecretKey | quote }}
+                path: client.crt
+              - key: {{ required "project.tls.clientKeySecretKey names the key inside project.tls.clientCertSecret that holds the client private key; see the chart's values.yaml" .Values.project.tls.clientKeySecretKey | quote }}
+                path: client.key
+{{- end }}

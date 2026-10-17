@@ -1,0 +1,9 @@
+[net]
+# cargo's built-in git transport tries ssh-agent and gives up; the git CLI
+# already holds whatever URL rewriting and credentials the environment provides,
+# and works unchanged on a clean CI runner where no rewriting exists.
+#
+# Needed because the in-org crates (yadgar-dial, yadgar-lifecycle,
+# yadgar-telemetry) are git dependencies pinned by tag rather than registry
+# crates.
+git-fetch-with-cli = true

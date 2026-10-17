@@ -1,0 +1,6 @@
+apiVersion: v2
+name: seeder
+description: The D35 seeder — writes the organisation's declared project registry through project, as one Argo-synced Job.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

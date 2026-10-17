@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "yadgar/seeder",
+  "$comment": "Closure is per chart (ADR-0850): this schema closes the keys this chart owns, so a typo in a key name refuses at render. Types, ranges and every cross-key rule are `templates/render-checks.yaml`'s job (ADR-0797, ADR-0847), which names the key and the reason in a sentence, WITH ONE EXCEPTION: `project.requestTimeoutSeconds`, `sync.attempts` and `sync.backoffSeconds` carry their integer ranges here because the binary's own bounds are pinned against these numbers (`tests/chart.rs`). `registry` is NOT required: v0.1.0 ships the ADR-0857 EXPAND step, so an absent block renders nothing at all; a present one is closed and checked whole. `global` is the open block the parent forwards to every module.",
+  "type": "object",
+  "properties": {
+    "global": {},
+    "image": {
+      "properties": { "repository": {}, "tag": {}, "digest": {} },
+      "additionalProperties": false
+    },
+    "resources": {},
+    "project": {
+      "properties": {
+        "host": {},
+        "port": {},
+        "requestTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 14,
+          "maximum": 59
+        },
+        "tls": {
+          "properties": {
+            "caSecret": {},
+            "caSecretKey": {},
+            "clientCertSecret": {},
+            "clientCertSecretKey": {},
+            "clientKeySecretKey": {},
+            "domain": {}
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": ["requestTimeoutSeconds"],
+      "additionalProperties": false
+    },
+    "sync": {
+      "properties": {
+        "attempts": { "type": "integer", "minimum": 1, "maximum": 60 },
+        "backoffSeconds": { "type": "integer", "minimum": 5, "maximum": 300 }
+      },
+      "required": ["attempts", "backoffSeconds"],
+      "additionalProperties": false
+    },
+    "job": {
+      "properties": { "backoffLimit": {}, "activeDeadlineSeconds": {} },
+      "additionalProperties": false
+    },
+    "registry": {
+      "properties": {
+        "roots": {
+          "items": {
+            "properties": { "path": {}, "displayName": {}, "sourceRepo": {} },
+            "additionalProperties": false
+          }
+        },
+        "projects": {
+          "items": {
+            "properties": { "path": {}, "displayName": {}, "sourceRepo": {} },
+            "additionalProperties": false
+          }
+        },
+        "allowMassArchive": {}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

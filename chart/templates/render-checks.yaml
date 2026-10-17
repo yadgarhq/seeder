@@ -1,0 +1,129 @@
+{{- /*
+EVERY RENDER CHECK THIS CHART DECLARES, IN ONE FILE, AND THE FILE RENDERS
+NOTHING. Each refusal names the values key and the reason (ADR-0606: each one is
+proved by a test carrying its poison input, `scripts/tests/test_render.py`).
+
+THE DECLARATION RULES MIRROR THE STORE'S (`project-db` v0.7.0,
+`src/write/sync.rs` and `src/path.rs`), which stays the authority, and the
+binary checks the same rules again (`src/registry.rs`). They run here so a bad
+declaration fails the Argo sync at render, before a Job exists.
+
+NOTHING IS CHECKED WHEN `registry` IS ABSENT: the chart then renders no object
+at all (ADR-0857 expand step). Every check below sits inside that guard.
+*/}}
+{{- if include "seeder.declared" . }}
+{{- $r := .Values.registry }}
+{{- if not (kindIs "map" $r) }}
+{{- fail "registry must be a map with `roots`, `projects` and `allowMassArchive` (plans/the-d35-seeder.md, \"The declaration\")" }}
+{{- end }}
+
+{{- /* ADR-0939: the mass-archive flag comes ONLY from an explicit value. No default. */}}
+{{- if not (and (hasKey $r "allowMassArchive") (kindIs "bool" $r.allowMassArchive)) }}
+{{- fail "registry.allowMassArchive must be set to true or false. It has no default (ADR-0939): false keeps the store's mass-archive guard on, and true lets ONE sync archive more than half of the active org projects" }}
+{{- end }}
+
+{{- range $list := list "roots" "projects" }}
+{{- if not (and (hasKey $r $list) (kindIs "slice" (get $r $list))) }}
+{{- fail (printf "registry.%s must be a list (it may be empty only for projects)" $list) }}
+{{- end }}
+{{- end }}
+{{- if not $r.roots }}
+{{- fail "registry.roots must name at least one root: the namespace anchors every project sits under (ADR-0673)" }}
+{{- end }}
+
+{{- $segment := "^[A-Za-z0-9._-]+$" }}
+{{- $roots := dict }}
+{{- $seen := dict }}
+{{- range $list := list "roots" "projects" }}
+{{- range $i, $e := get $r $list }}
+{{- $key := printf "registry.%s[%d]" $list $i }}
+{{- if not (kindIs "map" $e) }}
+{{- fail (printf "%s must be a map with path, sourceRepo and optionally displayName" $key) }}
+{{- end }}
+{{- if not (and (hasKey $e "path") (kindIs "string" $e.path) $e.path) }}
+{{- fail (printf "%s.path must be a non-empty string" $key) }}
+{{- end }}
+{{- $path := $e.path }}
+{{- if gt (len $path) 255 }}
+{{- fail (printf "%s.path %q is %d characters and the store's limit is 255" $key $path (len $path)) }}
+{{- end }}
+{{- range (splitList "/" $path) }}
+{{- if or (not (regexMatch $segment .)) (eq . ".") (eq . "..") }}
+{{- fail (printf "%s.path %q contains the segment %q. A segment is one or more of A-Z a-z 0-9 . _ - and is neither \".\" nor \"..\"; a leading, trailing or doubled slash is an empty segment" $key $path .) }}
+{{- end }}
+{{- end }}
+{{- $folded := lower $path }}
+{{- $first := first (splitList "/" $folded) }}
+{{- if eq $first "local" }}
+{{- fail (printf "%s.path %q is under the reserved segment \"local\". A sync declares organisation projects only; personal projects are registered by their own account (ledger 641)" $key $path) }}
+{{- end }}
+{{- if eq $list "roots" }}
+{{- if contains "/" $path }}
+{{- fail (printf "%s.path %q has more than one segment. A root is a namespace anchor, a single segment such as \"acme\" (ADR-0673); declare a deeper path as a project under one" $key $path) }}
+{{- end }}
+{{- $_ := set $roots $folded true }}
+{{- else }}
+{{- if or (not (contains "/" $path)) (not (hasKey $roots $first)) }}
+{{- fail (printf "%s.path %q is not under a declared root. Every project sits strictly beneath one of registry.roots" $key $path) }}
+{{- end }}
+{{- end }}
+{{- if hasKey $seen $folded }}
+{{- fail (printf "%s.path %q is declared twice (paths are compared with ASCII case folded, as the store compares them)" $key $path) }}
+{{- end }}
+{{- $_ := set $seen $folded true }}
+{{- /*
+WIDTHS IN CHARACTERS, NOT BYTES: the store counts `chars()` (`MAX_CHARS`) and so
+does the binary. sprig's `len` on a string is bytes, so a 200-character
+multibyte name would be refused at 400. `splitList ""` splits into characters.
+The path keeps `len`: the store measures it in bytes, and its grammar is ASCII.
+*/}}
+{{- if not (and (hasKey $e "sourceRepo") (kindIs "string" $e.sourceRepo) $e.sourceRepo) }}
+{{- fail (printf "%s.sourceRepo is empty for %q. Every declared row is org class, and an org row names the repository whose pull request flow governs it" $key $path) }}
+{{- end }}
+{{- if gt (len (splitList "" $e.sourceRepo)) 255 }}
+{{- fail (printf "%s.sourceRepo of %q is longer than the store's 255" $key $path) }}
+{{- end }}
+{{- if hasKey $e "displayName" }}
+{{- if not (kindIs "string" $e.displayName) }}
+{{- fail (printf "%s.displayName of %q must be a string" $key $path) }}
+{{- end }}
+{{- if gt (len (splitList "" $e.displayName)) 255 }}
+{{- fail (printf "%s.displayName of %q is longer than the store's 255" $key $path) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /*
+THE SIZE GUARD (ADR-0705), below the 1 MiB a ConfigMap holds. The binary
+refuses at the same number (`src/registry.rs`, `MAX_BYTES`); `tests/chart.rs`
+pins the two equal.
+*/}}
+{{- $bytes := len (include "seeder.registryJson" .) }}
+{{- if gt $bytes 786432 }}
+{{- fail (printf "registry renders to %d bytes and the guard is 786432, below the 1 MiB a ConfigMap holds (ADR-0705)" $bytes) }}
+{{- end }}
+
+{{- /*
+THE TRANSPORT (ADR-0854). Both Secrets are required with no chart default:
+`project` admits SyncProjects only from the seeder's own verified leaf, so there
+is no cleartext and no identity-less configuration that could work.
+*/}}
+{{- $tls := .Values.project.tls | default dict }}
+{{- if not $tls.caSecret }}
+{{- fail "project.tls.caSecret must name the Secret holding the authority that signed project's serving certificate (the estate's is `project-tls`). It has no default (ADR-0854)" }}
+{{- end }}
+{{- if not $tls.clientCertSecret }}
+{{- fail "project.tls.clientCertSecret must name the Secret holding the seeder's client leaf, `seeder-client-tls`, which platform issues with common name `seeder-caller`. It has no default (ADR-0854): project refuses every other leaf" }}
+{{- end }}
+
+{{- /*
+THE JOB'S DEADLINE MUST OUTLAST THE RETRY LOOP, or Kubernetes kills a run that
+was still allowed to wait for `project`. The loop's worst case is every attempt
+timing out: attempts x (requestTimeoutSeconds + backoffSeconds).
+*/}}
+{{- $loop := mul (int .Values.sync.attempts) (add (int .Values.project.requestTimeoutSeconds) (int .Values.sync.backoffSeconds)) }}
+{{- if lt (int .Values.job.activeDeadlineSeconds) (int $loop) }}
+{{- fail (printf "job.activeDeadlineSeconds (%d) is shorter than the retry loop's worst case, sync.attempts x (project.requestTimeoutSeconds + sync.backoffSeconds) = %d. Raise the deadline or shorten the loop" (int .Values.job.activeDeadlineSeconds) (int $loop)) }}
+{{- end }}
+{{- end }}
