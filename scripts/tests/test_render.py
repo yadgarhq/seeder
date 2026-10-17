@@ -277,3 +277,23 @@ def test_a_request_timeout_outside_the_dial_range_refuses() -> None:
     v = values(REGISTRY)
     v["project"]["requestTimeoutSeconds"] = 60
     refuses(v, "requestTimeoutSeconds")
+
+
+# --- widths are CHARACTERS, as the store and the binary count them ---------
+
+
+@pytest.mark.parametrize("field", ["displayName", "sourceRepo"])
+def test_a_multibyte_value_under_the_character_limit_renders(field: str) -> None:
+    """200 x "é" is 200 characters and 400 bytes. The store's limit is 255
+    CHARACTERS, so this is legal and must render; a byte count would refuse it."""
+    r = copy.deepcopy(REGISTRY)
+    r["projects"][0][field] = "é" * 200
+    doc = json.loads(rendered(values(r))["ConfigMap"]["data"]["registry.json"])
+    assert doc["projects"][0][field] == "é" * 200
+
+
+@pytest.mark.parametrize("field", ["displayName", "sourceRepo"])
+def test_a_multibyte_value_over_the_character_limit_is_refused(field: str) -> None:
+    r = copy.deepcopy(REGISTRY)
+    r["projects"][0][field] = "é" * 256
+    refuses(values(r), f"registry.projects[0].{field}")

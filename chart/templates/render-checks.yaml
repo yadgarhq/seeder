@@ -71,17 +71,23 @@ at all (ADR-0857 expand step). Every check below sits inside that guard.
 {{- fail (printf "%s.path %q is declared twice (paths are compared with ASCII case folded, as the store compares them)" $key $path) }}
 {{- end }}
 {{- $_ := set $seen $folded true }}
+{{- /*
+WIDTHS IN CHARACTERS, NOT BYTES: the store counts `chars()` (`MAX_CHARS`) and so
+does the binary. sprig's `len` on a string is bytes, so a 200-character
+multibyte name would be refused at 400. `splitList ""` splits into characters.
+The path keeps `len`: the store measures it in bytes, and its grammar is ASCII.
+*/}}
 {{- if not (and (hasKey $e "sourceRepo") (kindIs "string" $e.sourceRepo) $e.sourceRepo) }}
 {{- fail (printf "%s.sourceRepo is empty for %q. Every declared row is org class, and an org row names the repository whose pull request flow governs it" $key $path) }}
 {{- end }}
-{{- if gt (len $e.sourceRepo) 255 }}
+{{- if gt (len (splitList "" $e.sourceRepo)) 255 }}
 {{- fail (printf "%s.sourceRepo of %q is longer than the store's 255" $key $path) }}
 {{- end }}
 {{- if hasKey $e "displayName" }}
 {{- if not (kindIs "string" $e.displayName) }}
 {{- fail (printf "%s.displayName of %q must be a string" $key $path) }}
 {{- end }}
-{{- if gt (len $e.displayName) 255 }}
+{{- if gt (len (splitList "" $e.displayName)) 255 }}
 {{- fail (printf "%s.displayName of %q is longer than the store's 255" $key $path) }}
 {{- end }}
 {{- end }}
