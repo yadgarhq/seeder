@@ -1,0 +1,7 @@
+# What this module vendors from yadgarhq/proto (D70), at the SAME tag `project`
+# vendors (PROTO_VERSION). The seeder is a CLIENT of ProjectService, which is
+# declared in yadgar/project/v1/project.proto; buf closes the import graph, so
+# this also brings yadgar/common/v1. Moving PROTO_VERSION ahead of `project`'s
+# would let the seeder set a field `project` does not know, and prost drops an
+# unknown field silently (see `src/sync.rs`).
+yadgar/project/v1

@@ -1,0 +1,91 @@
+# In git the image points at a moving TAG; the PUBLISHED chart pins a DIGEST,
+# rewritten by ci-release at package time (D65).
+image:
+  repository: ghcr.io/yadgarhq/seeder
+  tag: latest
+
+# One short run; it holds a declaration and one gRPC call.
+resources:
+  requests:
+    cpu: 10m
+    memory: 16Mi
+  limits:
+    memory: 64Mi
+
+# THE ONE UPSTREAM: `project`, never `project-db` (ADR-0936). The binary has NO
+# compiled-in default for any of these (ADR-0569 as amended by ADR-0705); this
+# file is the only place a default lives.
+project:
+  # project's HEADLESS Service (D23): resolving it yields every ready pod.
+  host: project
+  # 50052, THE MODULE PORT — NOT 50051, which is project-db's (ledger 890).
+  port: 50052
+
+  # HOW LONG ONE SyncProjects MAY WAIT, in whole seconds. BOUNDED 14..=59 by
+  # yadgar-dial (`tests/chart.rs` pins the schema to the crate's own range).
+  #
+  # 45, ABOVE project's OWN HOP TO project-db (`projectDb.requestTimeoutSeconds`,
+  # 30 in project's chart). The whole declaration is applied by project-db in
+  # ONE transaction, and that transaction must commit inside project's 30 s
+  # bound; sitting above it means the seeder receives the store's answer, or
+  # project's own deadline refusal, rather than racing it. After a timeout on
+  # THIS hop the outcome is unknown, and convergence makes the next attempt
+  # correct either way.
+  requestTimeoutSeconds: 45
+
+  tls:
+    # REQUIRED, WITH NO DEFAULT (ADR-0854), and `templates/render-checks.yaml`
+    # refuses to render without them. There is no TLS switch: project admits
+    # SyncProjects only from a verified leaf named `seeder-caller`, so neither
+    # a cleartext seeder nor one without a client leaf could ever succeed.
+    #
+    # caSecret: the Secret holding the authority that signed project's
+    #   serving certificate. The estate's is `project-tls`.
+    # clientCertSecret: the seeder's client leaf, `seeder-client-tls`, issued by
+    #   platform with common name `seeder-caller`. The binary refuses at boot a
+    #   leaf naming anything else.
+    #
+    # The keys inside those Secrets, as cert-manager writes them.
+    caSecretKey: ca.crt
+    clientCertSecretKey: tls.crt
+    clientKeySecretKey: tls.key
+    # The name project's certificate is verified against, when it is NOT
+    # `project.host`. Empty: verify against the host.
+    domain: ""
+
+# HOW A `project` THAT ANSWERS UNAVAILABLE IS RETRIED. Only UNAVAILABLE: every
+# other answer is a refusal the same declaration would get again, and it ends
+# the run non-zero.
+sync:
+  # Total attempts, the first included. 10 x (45 s + 6 s) = 510 s worst case,
+  # which `job.activeDeadlineSeconds` must cover (a render check holds that).
+  attempts: 10
+  # At least yadgar-dial's 5 s re-resolve interval, so a retry can see an
+  # endpoint set the failed attempt could not.
+  backoffSeconds: 6
+
+job:
+  # Pod retries of one sync. A refusal fails every pod the same way, so this is
+  # for a pod lost to its node, not for a bad declaration.
+  backoffLimit: 2
+  # The outer bound on one sync, every pod and retry included.
+  activeDeadlineSeconds: 600
+
+# THE DECLARATION (plans/the-d35-seeder.md, "The declaration"). ABSENT HERE ON
+# PURPOSE: v0.1.0 is ADR-0857's expand step, so with no `registry` block this
+# chart renders NOTHING. The parent chart's later contract step makes it
+# required. A present block is checked whole (`templates/render-checks.yaml`):
+#
+# registry:
+#   # Namespace anchors: single segments, never a landing site (ADR-0673).
+#   roots:
+#     - path: yadgarhq
+#       sourceRepo: yadgarhq/argocd
+#   # Every project, strictly under a root. `[]` is legal.
+#   projects:
+#     - path: yadgarhq/gateway
+#       displayName: gateway
+#       sourceRepo: yadgarhq/gateway
+#   # REQUIRED, NO DEFAULT (ADR-0939). false keeps the store's guard on: a sync
+#   # that would archive more than half of the active org rows is refused.
+#   allowMassArchive: false
