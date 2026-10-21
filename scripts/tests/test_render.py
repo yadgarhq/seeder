@@ -185,13 +185,51 @@ def test_mass_archive_true_is_carried() -> None:
     assert json.loads(rendered(values(r))["ConfigMap"]["data"]["registry.json"])["allowMassArchive"]
 
 
-# --- the expand step: no registry, nothing rendered ------------------------
+# --- the contract step: `registry` is required with no default -------------
+#
+# ADR-0857 step 3 (plans/the-d35-seeder.md, "Rules for the block"): an absent
+# block fails the render and names the key. v0.1.x was the expand step, where an
+# absent block rendered nothing; the parent's fixture (chart#51) now declares a
+# registry in every render it makes, so the chart refuses instead of going quiet.
+
+REGISTRY_REQUIRED = "registry is required with no default"
+
+# AN ABSENT BLOCK IS REFUSED BY THE SCHEMA, WHICH RUNS BEFORE ANY TEMPLATE, IN
+# HELM'S OWN WORDS — and those differ by major, measured: helm 3.18.4 (Argo's
+# helm, and CI's) says "(root): registry is required", helm 4.3.0 says "missing
+# property 'registry'". Either names the key; nothing else passes.
+SCHEMA_REFUSALS = ("registry is required", "missing property 'registry'")
 
 
-def test_no_registry_renders_nothing() -> None:
-    result = render({})
-    assert result.returncode == 0, result.stderr
-    assert objects(result.stdout) == []
+def refuses_absent(v: dict) -> None:
+    result = render(v)
+    assert result.returncode != 0, f"an absent registry must refuse; rendered:\n{result.stdout}"
+    assert any(n in result.stderr for n in SCHEMA_REFUSALS), (
+        f"the refusal must name the key `registry`:\n{result.stderr}"
+    )
+
+
+def test_an_absent_registry_is_refused_naming_the_key() -> None:
+    refuses_absent(values())
+
+
+def test_a_null_registry_is_refused_as_absent() -> None:
+    """`registry: null` is how an adopter's values file deletes a key, and helm
+    coalesces it away. It must refuse exactly as an absent block does, not slip
+    past the check."""
+    refuses(values(None) | {"registry": None}, REGISTRY_REQUIRED)
+
+
+def test_an_entirely_empty_values_file_is_refused_naming_the_registry() -> None:
+    refuses_absent({})
+
+
+def test_the_chart_s_own_ci_fixture_renders_the_job() -> None:
+    """`chart/ci/values.yaml` is what every shared gate renders this chart with
+    (helm-lint, D80 portability, the parent's pre-pin job); it must stay a
+    complete, legal declaration now that the block is required."""
+    fixture = yaml.safe_load((CHART / "ci" / "values.yaml").read_text())
+    assert set(rendered(fixture)) == {"ServiceAccount", "ConfigMap", "Job"}
 
 
 def test_an_empty_registry_block_is_refused_not_skipped() -> None:

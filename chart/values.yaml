@@ -71,10 +71,12 @@ job:
   # The outer bound on one sync, every pod and retry included.
   activeDeadlineSeconds: 600
 
-# THE DECLARATION (plans/the-d35-seeder.md, "The declaration"). ABSENT HERE ON
-# PURPOSE: v0.1.0 is ADR-0857's expand step, so with no `registry` block this
-# chart renders NOTHING. The parent chart's later contract step makes it
-# required. A present block is checked whole (`templates/render-checks.yaml`):
+# THE DECLARATION (plans/the-d35-seeder.md, "The declaration"). REQUIRED, WITH
+# NO DEFAULT, AND SO ABSENT HERE ON PURPOSE (ADR-0569 as amended by ADR-0705):
+# this is ADR-0857's contract step, and a render without a `registry` block
+# refuses and names the key (through the parent chart: `seeder.registry`). v0.1.x
+# was the expand step, where an absent block rendered nothing. The block is
+# checked whole (`templates/render-checks.yaml`):
 #
 # registry:
 #   # Namespace anchors: single segments, never a landing site (ADR-0673).

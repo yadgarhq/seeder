@@ -75,7 +75,9 @@ registry:
   allowMassArchive: false # required, no default (ADR-0939)
 ```
 
-With no `registry` block the chart renders nothing (ADR-0857 expand step).
+The `registry` block is required, with no default (ADR-0857 contract step).
+A render without it refuses and names the key; through the parent chart the
+key is `seeder.registry`. Releases before v0.2.0 rendered nothing without it.
 
 ## Checks
 
