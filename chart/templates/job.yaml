@@ -1,4 +1,3 @@
-{{- if include "seeder.declared" . }}
 {{- /*
 ONE SYNC PER ARGO SYNC, AND NO CRONJOB (ADR-0940). The declaration changes only
 by a commit, a commit re-renders this Job, and the run is idempotent by
@@ -116,4 +115,3 @@ spec:
                 path: client.crt
               - key: {{ required "project.tls.clientKeySecretKey names the key inside project.tls.clientCertSecret that holds the client private key; see the chart's values.yaml" .Values.project.tls.clientKeySecretKey | quote }}
                 path: client.key
-{{- end }}

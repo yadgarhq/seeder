@@ -8,10 +8,11 @@ THE DECLARATION RULES MIRROR THE STORE'S (`project-db` v0.7.0,
 binary checks the same rules again (`src/registry.rs`). They run here so a bad
 declaration fails the Argo sync at render, before a Job exists.
 
-NOTHING IS CHECKED WHEN `registry` IS ABSENT: the chart then renders no object
-at all (ADR-0857 expand step). Every check below sits inside that guard.
+`registry` IS REQUIRED (ADR-0857 contract step). An absent or null block is
+refused before any check below runs: by the schema, or by the `required` in
+`seeder.registry` (`_registry.tpl`), included first below.
 */}}
-{{- if include "seeder.declared" . }}
+{{- $_ := include "seeder.registry" . }}
 {{- $r := .Values.registry }}
 {{- if not (kindIs "map" $r) }}
 {{- fail "registry must be a map with `roots`, `projects` and `allowMassArchive` (plans/the-d35-seeder.md, \"The declaration\")" }}
@@ -125,5 +126,4 @@ timing out: attempts x (requestTimeoutSeconds + backoffSeconds).
 {{- $loop := mul (int .Values.sync.attempts) (add (int .Values.project.requestTimeoutSeconds) (int .Values.sync.backoffSeconds)) }}
 {{- if lt (int .Values.job.activeDeadlineSeconds) (int $loop) }}
 {{- fail (printf "job.activeDeadlineSeconds (%d) is shorter than the retry loop's worst case, sync.attempts x (project.requestTimeoutSeconds + sync.backoffSeconds) = %d. Raise the deadline or shorten the loop" (int .Values.job.activeDeadlineSeconds) (int $loop)) }}
-{{- end }}
 {{- end }}
