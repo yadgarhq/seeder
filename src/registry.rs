@@ -17,7 +17,10 @@ use std::collections::HashSet;
 
 use serde::Deserialize;
 
+use crate::pb::yadgar::iam::v1::DeclaredTeam;
 use crate::pb::yadgar::project::v1::DeclaredProject;
+
+mod teams;
 
 /// The size guard on the rendered document, below the 1 MiB a ConfigMap can
 /// hold (ADR-0705's guard). The chart's `templates/configmap.yaml` refuses at
@@ -41,6 +44,11 @@ struct Entry {
     path: String,
     display_name: String,
     source_repo: String,
+    /// Absent is empty: only the transition rule leaves it out
+    /// (plans/team-access.md §2), and `teams::check` refuses a non-empty list
+    /// while no team is declared.
+    #[serde(default)]
+    grants: Vec<teams::Grant>,
 }
 
 /// The document as the chart renders it.
@@ -50,6 +58,13 @@ struct Document {
     roots: Vec<Entry>,
     projects: Vec<Entry>,
     allow_mass_archive: bool,
+    /// Absent is the transition rule (`teams` empty), see `teams.rs`.
+    #[serde(default)]
+    teams: Vec<teams::Team>,
+    /// REQUIRED once `teams` is non-empty, and REFUSED while it is empty
+    /// (both checked in `validate`): without teams the wire carries empty grant
+    /// sets, and the flag must not lift the guard over them.
+    allow_mass_revoke: Option<bool>,
 }
 
 /// A checked declaration, already in the contract's element type.
@@ -60,6 +75,11 @@ pub struct Declaration {
     /// ADR-0939's flag. `false` is the guard ON. Read only from the explicit
     /// `registry.allowMassArchive` value; there is no other source.
     pub allow_mass_archive: bool,
+    /// The declared teams, in the iam contract's element type. Empty means the
+    /// transition rule (plans/team-access.md §2): no `SyncTeams` call is made.
+    pub teams: Vec<DeclaredTeam>,
+    /// ADR-0963 (6)'s flag. `false` is the guard ON.
+    pub allow_mass_revoke: bool,
 }
 
 /// Why the declaration was refused. Every message names the path or the key.
@@ -159,10 +179,35 @@ fn validate(doc: Document) -> Result<Declaration, RegistryError> {
             )));
         }
     }
+    let wire_teams = teams::check(&doc.teams, &doc.roots, &doc.projects)?;
+    let allow_mass_revoke = match (wire_teams.is_empty(), doc.allow_mass_revoke) {
+        (false, None) => {
+            return Err(invalid(
+                "registry.allowMassRevoke must be set to true or false once registry.teams is \
+                 declared. It has no default (ADR-0963 (6)): false keeps the store's mass-revoke \
+                 guard on, and true lets ONE sync delete more than half of the stored grants"
+                    .to_string(),
+            ))
+        }
+        (true, Some(_)) => {
+            return Err(invalid(
+                "registry.allowMassRevoke is set while registry.teams is absent or empty. Without \
+                 teams every grant set sent is empty, the shape that deletes every stored grant, so \
+                 the flag that lifts the store's mass-revoke guard (ADR-0963 (6)) is refused here. \
+                 The chart renders it only with teams declared (the transition rule, \
+                 plans/team-access.md §2)"
+                    .to_string(),
+            ))
+        }
+        (false, Some(flag)) => flag,
+        (true, None) => false,
+    };
     Ok(Declaration {
         roots: doc.roots.into_iter().map(declared).collect(),
         projects: doc.projects.into_iter().map(declared).collect(),
         allow_mass_archive: doc.allow_mass_archive,
+        teams: wire_teams,
+        allow_mass_revoke,
     })
 }
 
@@ -256,11 +301,13 @@ fn declared(e: Entry) -> DeclaredProject {
         path,
         display_name,
         source_repo,
+        grants,
     } = e;
     DeclaredProject {
         path,
         display_name,
         source_repo,
+        grants: grants.iter().map(teams::wire_grant).collect(),
     }
 }
 

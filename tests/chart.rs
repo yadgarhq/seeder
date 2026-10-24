@@ -38,6 +38,15 @@ fn the_request_timeout_range_is_the_dial_s() {
     assert_eq!((min, max), (14, 59));
 }
 
+/// iam's timeout is bounded by the same dial as project's.
+#[test]
+fn the_iam_request_timeout_range_is_the_dial_s() {
+    let (min, max) = range("iam", "requestTimeoutSeconds");
+    assert_eq!(min, yadgar_dial::min_request_timeout().as_secs());
+    assert_eq!(max, yadgar_dial::max_request_timeout().as_secs());
+    assert_eq!((min, max), (14, 59));
+}
+
 #[test]
 fn the_attempts_range_is_the_binary_s() {
     let (min, max) = range("sync", "attempts");

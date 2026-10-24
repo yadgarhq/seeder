@@ -1,12 +1,16 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "yadgar/seeder",
-  "$comment": "Closure is per chart (ADR-0850): this schema closes the keys this chart owns, so a typo in a key name refuses at render. Types, ranges and every cross-key rule are `templates/render-checks.yaml`'s job (ADR-0797, ADR-0847), which names the key and the reason in a sentence, WITH ONE EXCEPTION: `project.requestTimeoutSeconds`, `sync.attempts` and `sync.backoffSeconds` carry their integer ranges here because the binary's own bounds are pinned against these numbers (`tests/chart.rs`). `registry` IS REQUIRED, WITH NO DEFAULT: this is the ADR-0857 CONTRACT step (v0.1.x was the expand step, where an absent block rendered nothing). The schema refuses an absent block in helm's own words; `templates/_registry.tpl` refuses a `registry: null` the schema lets through, and any render that skips the schema, in a sentence naming the key. A present block is closed here and checked whole by `templates/render-checks.yaml`. `global` is the open block the parent forwards to every module.",
+  "$comment": "Closure is per chart (ADR-0850): this schema closes the keys this chart owns, so a typo in a key name refuses at render. Types, ranges and every cross-key rule are `templates/render-checks.yaml`'s job (ADR-0797, ADR-0847), which names the key and the reason in a sentence, WITH TWO EXCEPTIONS. FIRST: `project.requestTimeoutSeconds`, `iam.requestTimeoutSeconds`, `sync.attempts` and `sync.backoffSeconds` carry their integer ranges here because the binary's own bounds are pinned against these numbers (`tests/chart.rs`). SECOND, `registry.teams` (plans/team-access.md §2): when `teams` is non-empty it contains a team named `administrators` whose `members` has at least one entry. That is a draft-07 `if`/`then` + `contains` rule under `registry`, kept here because it constrains the shape of ONE key, `teams`, and the schema refusal names that key's path; the cross-key rules beside it (unique names, every grant names a declared team, every root grants `administrators` readWrite) stay in `render-checks.yaml`. `registry` IS REQUIRED, WITH NO DEFAULT: this is the ADR-0857 CONTRACT step (v0.1.x was the expand step, where an absent block rendered nothing). The schema refuses an absent block in helm's own words; `templates/_registry.tpl` refuses a `registry: null` the schema lets through, and any render that skips the schema, in a sentence naming the key. A present block is closed here and checked whole by `templates/render-checks.yaml`. `global` is the open block the parent forwards to every module.",
   "type": "object",
   "properties": {
     "global": {},
     "image": {
-      "properties": { "repository": {}, "tag": {}, "digest": {} },
+      "properties": {
+        "repository": {},
+        "tag": {},
+        "digest": {}
+      },
       "additionalProperties": false
     },
     "resources": {},
@@ -34,35 +38,130 @@
       "required": ["requestTimeoutSeconds"],
       "additionalProperties": false
     },
+    "iam": {
+      "properties": {
+        "host": {},
+        "port": {},
+        "requestTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 14,
+          "maximum": 59
+        },
+        "tls": {
+          "properties": {
+            "caSecret": {},
+            "caSecretKey": {},
+            "domain": {}
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": ["requestTimeoutSeconds"],
+      "additionalProperties": false
+    },
     "sync": {
       "properties": {
-        "attempts": { "type": "integer", "minimum": 1, "maximum": 60 },
-        "backoffSeconds": { "type": "integer", "minimum": 5, "maximum": 300 }
+        "attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "backoffSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 300
+        }
       },
       "required": ["attempts", "backoffSeconds"],
       "additionalProperties": false
     },
     "job": {
-      "properties": { "backoffLimit": {}, "activeDeadlineSeconds": {} },
+      "properties": {
+        "backoffLimit": {},
+        "activeDeadlineSeconds": {}
+      },
       "additionalProperties": false
     },
     "registry": {
       "properties": {
         "roots": {
           "items": {
-            "properties": { "path": {}, "displayName": {}, "sourceRepo": {} },
+            "properties": {
+              "path": {},
+              "displayName": {},
+              "sourceRepo": {},
+              "grants": {
+                "items": {
+                  "properties": {
+                    "team": {},
+                    "level": {}
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
             "additionalProperties": false
           }
         },
         "projects": {
           "items": {
-            "properties": { "path": {}, "displayName": {}, "sourceRepo": {} },
+            "properties": {
+              "path": {},
+              "displayName": {},
+              "sourceRepo": {},
+              "grants": {
+                "items": {
+                  "properties": {
+                    "team": {},
+                    "level": {}
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
             "additionalProperties": false
           }
         },
-        "allowMassArchive": {}
+        "allowMassArchive": {},
+        "teams": {
+          "items": {
+            "properties": {
+              "name": {},
+              "members": {}
+            },
+            "additionalProperties": false
+          }
+        },
+        "allowMassRevoke": {}
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "teams": {
+            "minItems": 1
+          }
+        },
+        "required": ["teams"]
+      },
+      "then": {
+        "properties": {
+          "teams": {
+            "contains": {
+              "type": "object",
+              "required": ["name", "members"],
+              "properties": {
+                "name": {
+                  "const": "administrators"
+                },
+                "members": {
+                  "type": "array",
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "required": ["registry"],

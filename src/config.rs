@@ -3,10 +3,14 @@
 //! each one; an absent or empty value refuses the run, naming the variable and
 //! the chart key that renders it.
 //!
-//! **THE ONLY UPSTREAM IS `project`.** There is no `PROJECT_DB_*` key and no
-//! other host key of any kind (ADR-0936: no module dials a `-db`). The set of
-//! keys read is [`KEYS`], and `tests/config.rs` asserts it against the keys a
-//! real read actually looks up, so a key added here and not there is red.
+//! **THE ONLY UPSTREAMS ARE `project` AND `iam`.** There is no `PROJECT_DB_*`
+//! or `IAM_DB_*` key and no other host key of any kind (ADR-0936, ADR-0938: no
+//! module dials a `-db`). `iam` is dialled only when the declaration names
+//! teams (`SyncTeams`, plans/team-access.md), so the `IAM_*` block is optional AS
+//! A BLOCK: absent `IAM_HOST` means no iam, and once it is set every other
+//! `IAM_*` key but the TLS domain is required. The set of keys read is
+//! [`KEYS`], and `tests/config.rs` asserts it against the keys a real read
+//! actually looks up, so a key added here and not there is red.
 //!
 //! **NO TLS SWITCH, deliberately.** `project` admits `SyncProjects` only from a
 //! verified client leaf named `seeder-caller` (ADR-0936, ADR-0942), so a
@@ -29,6 +33,11 @@ pub const KEYS: &[&str] = &[
     TLS_DOMAIN,
     SYNC_ATTEMPTS,
     SYNC_BACKOFF,
+    IAM_HOST,
+    IAM_PORT,
+    IAM_REQUEST_TIMEOUT,
+    IAM_TLS_CA_FILE,
+    IAM_TLS_DOMAIN,
 ];
 
 pub const REGISTRY_FILE: &str = "SEEDER_REGISTRY_FILE";
@@ -44,6 +53,15 @@ pub const TLS_CLIENT_KEY_FILE: &str = "PROJECT_TLS_CLIENT_KEY_FILE";
 pub const TLS_DOMAIN: &str = "PROJECT_TLS_DOMAIN";
 pub const SYNC_ATTEMPTS: &str = "SEEDER_SYNC_ATTEMPTS";
 pub const SYNC_BACKOFF: &str = "SEEDER_SYNC_BACKOFF_SECONDS";
+/// The `IAM_*` block, rendered only when `registry.teams` is declared. The
+/// client leaf is the seeder's one (`PROJECT_TLS_CLIENT_*`): `seeder-client-tls`
+/// is reused for iam, no second leaf.
+pub const IAM_HOST: &str = "IAM_HOST";
+pub const IAM_PORT: &str = "IAM_PORT";
+pub const IAM_REQUEST_TIMEOUT: &str = "IAM_REQUEST_TIMEOUT_SECONDS";
+pub const IAM_TLS_CA_FILE: &str = "IAM_TLS_CA_FILE";
+/// OPTIONAL, like [`TLS_DOMAIN`].
+pub const IAM_TLS_DOMAIN: &str = "IAM_TLS_DOMAIN";
 
 /// The chart key each variable is rendered from, for the refusal.
 fn chart_key(var: &str) -> &'static str {
@@ -54,6 +72,10 @@ fn chart_key(var: &str) -> &'static str {
         REQUEST_TIMEOUT => REQUEST_TIMEOUT_CHART_KEY,
         TLS_CA_FILE => "project.tls.caSecret",
         TLS_CLIENT_CERT_FILE | TLS_CLIENT_KEY_FILE => "project.tls.clientCertSecret",
+        IAM_HOST => "iam.host",
+        IAM_PORT => "iam.port",
+        IAM_REQUEST_TIMEOUT => IAM_REQUEST_TIMEOUT_CHART_KEY,
+        IAM_TLS_CA_FILE => "iam.tls.caSecret",
         SYNC_ATTEMPTS => "sync.attempts",
         SYNC_BACKOFF => "sync.backoffSeconds",
         _ => "this chart's values.yaml",
@@ -62,6 +84,9 @@ fn chart_key(var: &str) -> &'static str {
 
 /// The chart key that renders [`REQUEST_TIMEOUT`].
 pub const REQUEST_TIMEOUT_CHART_KEY: &str = "project.requestTimeoutSeconds";
+
+/// The chart key that renders [`IAM_REQUEST_TIMEOUT`].
+pub const IAM_REQUEST_TIMEOUT_CHART_KEY: &str = "iam.requestTimeoutSeconds";
 
 /// The most attempts a run may make. A ceiling, so a typo cannot hold a Job
 /// for hours; the Job's `activeDeadlineSeconds` is the outer bound.
@@ -79,6 +104,21 @@ pub struct Config {
     pub request_timeout: Duration,
     pub tls: Tls,
     pub retry: Retry,
+    /// `Some` only when the chart rendered the `IAM_*` block, which it does
+    /// only when `registry.teams` is declared.
+    pub iam: Option<Iam>,
+}
+
+/// The transport to `iam`. The client leaf is [`Tls::client_cert_file`] and
+/// [`Tls::client_key_file`]: the seeder presents one identity to both hops.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Iam {
+    pub host: String,
+    pub port: u16,
+    pub request_timeout: Duration,
+    /// The authority that signed iam's serving certificate (`iam-tls`).
+    pub ca_file: PathBuf,
+    pub domain: Option<String>,
 }
 
 /// The transport to `project`: the authority it is verified against, and the
@@ -215,6 +255,29 @@ impl Config {
             ));
         }
 
+        let iam = if lookup(IAM_HOST).is_some() {
+            let host = required(IAM_HOST)?;
+            let raw = required(IAM_PORT)?;
+            let port: u16 = raw
+                .parse()
+                .map_err(|e| unusable(IAM_PORT, &raw, format!("not a port number: {e}")))?;
+            Some(Iam {
+                host,
+                port,
+                request_timeout: yadgar_dial::request_timeout_from_lookup(
+                    &lookup,
+                    IAM_REQUEST_TIMEOUT,
+                    IAM_REQUEST_TIMEOUT_CHART_KEY,
+                )?,
+                ca_file: PathBuf::from(required(IAM_TLS_CA_FILE)?),
+                domain: lookup(IAM_TLS_DOMAIN)
+                    .map(|v| v.trim().to_string())
+                    .filter(|v| !v.is_empty()),
+            })
+        } else {
+            None
+        };
+
         Ok(Self {
             registry_file,
             project_host,
@@ -222,6 +285,7 @@ impl Config {
             request_timeout,
             tls,
             retry: Retry { attempts, backoff },
+            iam,
         })
     }
 }

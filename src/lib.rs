@@ -2,22 +2,27 @@
 //! project registry (ADR-0705 as amended by ADR-0713 and ADR-0936, ADR-0934).
 //!
 //! **A JOB, NOT A SERVICE (ADR-0940).** It serves no RPC. One run is one sync:
-//! read the declaration the chart rendered, check it, send it to `project` in
-//! ONE `ProjectService.SyncProjects` call, log what the store did, exit. A
+//! read the declaration the chart rendered, check it, send the teams to `iam` in
+//! ONE `IamService.SyncTeams` call when it declares any (plans/team-access.md),
+//! then send it to `project` in ONE `ProjectService.SyncProjects` call, log what
+//! the stores did, exit. `SyncProjects` follows only a successful `SyncTeams`. A
 //! commit to the organisation's GitOps repository re-renders the Job, and that
 //! is the only trigger. There is no CronJob.
 //!
-//! **IT DIALS `project` AND NOTHING ELSE.** No module talks to a `-db` or its
-//! engine directly (ADR-0936, ADR-0938): `project` checks the caller and relays
-//! to `project-db`. This crate has no configuration key that could name
-//! `project-db`, and `tests/config.rs` pins that.
+//! **IT DIALS `project`, AND `iam` ONLY WHEN TEAMS ARE DECLARED, AND NOTHING
+//! ELSE.** No module talks to a `-db` or its engine directly (ADR-0936,
+//! ADR-0938): `project` checks the caller and relays to `project-db`, `iam` does
+//! the same to `iam-db`. This crate has no configuration key that could name
+//! either `-db`, and `tests/config.rs` pins that.
 
 #![forbid(unsafe_code)]
 
 pub mod config;
 pub mod identity;
+pub mod outcome;
 pub mod registry;
 pub mod sync;
+pub mod sync_teams;
 pub mod upstream;
 
 /// Generated from the vendored contract (D16, D70), at the SAME tag `project`
@@ -29,6 +34,21 @@ pub mod pb {
         pub mod common {
             pub mod v1 {
                 tonic::include_proto!("yadgar.common.v1");
+            }
+        }
+        pub mod telemetry {
+            pub mod v1 {
+                tonic::include_proto!("yadgar.telemetry.v1");
+            }
+        }
+        pub mod iam {
+            pub mod v1 {
+                // The same suppression, for the same reason, over `iam.proto`'s
+                // bullet-list service comment (D16: generated output is never
+                // hand-edited).
+                #![allow(clippy::doc_lazy_continuation)]
+
+                tonic::include_proto!("yadgar.iam.v1");
             }
         }
         pub mod project {

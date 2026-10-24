@@ -10,6 +10,8 @@
 
 #![allow(dead_code)]
 
+pub mod iam;
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -133,6 +135,8 @@ pub struct Fake {
     /// every further call gets [`counts`]`(0, 0, 0, 0, 0)`.
     script: Arc<Mutex<Vec<Result<pb::ProjectServiceSyncProjectsResponse, Status>>>>,
     received: Arc<Mutex<Vec<Received>>>,
+    /// Where this fake logs each call it gets, to be compared with the iam fake's.
+    order: iam::Order,
 }
 
 impl Fake {
@@ -140,11 +144,26 @@ impl Fake {
         Self {
             script: Arc::new(Mutex::new(script)),
             received: Arc::default(),
+            order: iam::Order::default(),
         }
+    }
+
+    /// The same fake, logging its calls into `order` beside the iam fake's.
+    pub fn ordered(mut self, order: &iam::Order) -> Self {
+        self.order = order.clone();
+        self
     }
 
     pub fn received(&self) -> Vec<Received> {
         self.received.lock().unwrap().clone()
+    }
+}
+
+/// [`counts`] with the grant echo `project` returns once it vendors grants.
+pub fn counts_with_grants(grants_declared: u32) -> pb::ProjectServiceSyncProjectsResponse {
+    pb::ProjectServiceSyncProjectsResponse {
+        grants_declared,
+        ..counts(0, 0, 0, 0, 0)
     }
 }
 
@@ -161,6 +180,10 @@ pub fn counts(
         archived,
         reactivated,
         unchanged,
+        grants_declared: 0,
+        grants_inserted: 0,
+        grants_deleted: 0,
+        grants_unchanged: 0,
     }
 }
 
@@ -184,6 +207,7 @@ impl ProjectService for Fake {
         &self,
         request: Request<pb::ProjectServiceSyncProjectsRequest>,
     ) -> Result<Response<pb::ProjectServiceSyncProjectsResponse>, Status> {
+        self.order.push("SyncProjects");
         let caller = yadgar_lifecycle::serve_tls::caller_common_name(&request);
         self.received.lock().unwrap().push(Received {
             caller: caller.clone(),
@@ -276,6 +300,32 @@ pub fn env(
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
     .collect()
+}
+
+/// [`env`], plus the `IAM_*` block the chart renders when teams are declared,
+/// pointed at the iam fake on `iam_port`. The same authority signs both fakes,
+/// and the client leaf is the one `env` mints: the seeder presents one identity.
+pub fn env_iam(
+    scratch: &Scratch,
+    pki: &Pki,
+    port: u16,
+    iam_port: u16,
+    registry: &str,
+) -> Vec<(String, String)> {
+    let mut vars = env(scratch, pki, port, "seeder-caller", registry);
+    let ca = scratch.path().join("ca.pem").display().to_string();
+    vars.extend(
+        [
+            ("IAM_HOST", "127.0.0.1".to_string()),
+            ("IAM_PORT", iam_port.to_string()),
+            ("IAM_REQUEST_TIMEOUT_SECONDS", "20".to_string()),
+            ("IAM_TLS_CA_FILE", ca),
+            ("IAM_TLS_DOMAIN", SERVED_NAME.to_string()),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v)),
+    );
+    vars
 }
 
 /// Run the real binary with exactly `vars` (the environment is cleared first)
