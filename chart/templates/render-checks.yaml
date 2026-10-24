@@ -96,6 +96,107 @@ The path keeps `len`: the store measures it in bytes, and its grammar is ASCII.
 {{- end }}
 
 {{- /*
+TEAM ACCESS (plans/team-access.md §2). Cross-key rules, each naming the key. The
+one rule that is NOT here is "`teams` non-empty means a team named
+`administrators` with at least one member": that constrains the shape of the one
+key `teams` and lives in `values.schema.json` as a draft-07 `if`/`then` +
+`contains`, a named exception in its `$comment`. This file therefore checks the
+`administrators` root grants only when `administrators` is declared, and checks
+no member COUNT. The seeder binary checks both again (`src/registry/teams.rs`).
+
+THE TRANSITION RULE: with `teams` absent or empty no `grants` key may appear on
+any row, and nothing below it runs. `seeder.hasTeams` is "true" only for a
+non-empty list.
+*/}}
+{{- if and (hasKey $r "teams") $r.teams (not (kindIs "slice" $r.teams)) }}
+{{- fail "registry.teams must be a list of {name, members} maps. It may be absent or empty (then no `grants` key may appear anywhere and the seeder makes no SyncTeams call)" }}
+{{- end }}
+{{- $hasTeams := eq (include "seeder.hasTeams" .) "true" }}
+{{- if not $hasTeams }}
+{{- range $list := list "roots" "projects" }}
+{{- range $i, $e := get $r $list }}
+{{- if $e.grants }}
+{{- fail (printf "registry.%s[%d].grants is set on %q while registry.teams is absent or empty. A grant names a declared team: declare registry.teams, or remove every `grants` key (the transition rule, plans/team-access.md §2)" $list $i $e.path) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- else }}
+{{- if not (and (hasKey $r "allowMassRevoke") (kindIs "bool" $r.allowMassRevoke)) }}
+{{- fail "registry.allowMassRevoke must be set to true or false once registry.teams is declared. It has no default (ADR-0963 (6)): false keeps the store's mass-revoke guard on, and true lets ONE sync delete more than half of the stored grants" }}
+{{- end }}
+{{- if not (($.Values.iam | default dict).tls | default dict).caSecret }}
+{{- fail "iam.tls.caSecret must name the Secret holding the authority that signed iam's serving certificate (the estate's is `iam-tls`) once registry.teams is declared. It has no default (ADR-0854): the seeder dials iam for SyncTeams, and presents the same client leaf as to project" }}
+{{- end }}
+{{- $names := dict }}
+{{- range $i, $t := $r.teams }}
+{{- $key := printf "registry.teams[%d]" $i }}
+{{- if not (kindIs "map" $t) }}
+{{- fail (printf "%s must be a map with name and members" $key) }}
+{{- end }}
+{{- if not (and (kindIs "string" $t.name) (regexMatch "^[a-z][a-z0-9-]{0,62}$" $t.name)) }}
+{{- fail (printf "%s.name %q is not a team name. A name matches ^[a-z][a-z0-9-]{0,62}$" $key (toString $t.name)) }}
+{{- end }}
+{{- if hasKey $names $t.name }}
+{{- fail (printf "%s.name %q is declared twice. Names are unique; a rename is an archive plus a new team" $key $t.name) }}
+{{- end }}
+{{- $_ := set $names $t.name true }}
+{{- /* A members list that is absent or empty is the schema's to refuse for `administrators`; any other team may be empty. */}}
+{{- if and (hasKey $t "members") $t.members (not (kindIs "slice" $t.members)) }}
+{{- fail (printf "%s.members must be a list of uuids" $key) }}
+{{- end }}
+{{- $seenMembers := dict }}
+{{- range $j, $m := $t.members }}
+{{- if not (and (kindIs "string" $m) (regexMatch "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" $m)) }}
+{{- fail (printf "%s.members[%d] %q is not a lowercase canonical uuidv7: 36 characters, 8-4-4-4-12 lowercase hex, version 7, variant 8, 9, a or b. Declare the bare uuid `GET /auth/whoami` answers as account_segment" $key $j (toString $m)) }}
+{{- end }}
+{{- if hasKey $seenMembers $m }}
+{{- fail (printf "%s.members[%d] %q is listed more than once" $key $j $m) }}
+{{- end }}
+{{- $_ := set $seenMembers $m true }}
+{{- end }}
+{{- end }}
+{{- range $list := list "roots" "projects" }}
+{{- range $i, $e := get $r $list }}
+{{- $row := printf "registry.%s[%d]" $list $i }}
+{{- $seenTeams := dict }}
+{{- if and (hasKey $e "grants") $e.grants (not (kindIs "slice" $e.grants)) }}
+{{- fail (printf "%s.grants must be a list of {team, level} maps" $row) }}
+{{- end }}
+{{- range $k, $g := $e.grants }}
+{{- $key := printf "%s.grants[%d]" $row $k }}
+{{- if not (kindIs "map" $g) }}
+{{- fail (printf "%s must be a map with team and level" $key) }}
+{{- end }}
+{{- if not (and (kindIs "string" $g.team) (hasKey $names $g.team)) }}
+{{- fail (printf "%s.team %q on %q names a team that registry.teams does not declare" $key (toString $g.team) $e.path) }}
+{{- end }}
+{{- if not (has $g.level (list "read" "readWrite")) }}
+{{- fail (printf "%s.level %q on %q must be read or readWrite" $key (toString $g.level) $e.path) }}
+{{- end }}
+{{- if hasKey $seenTeams $g.team }}
+{{- fail (printf "%s.team %q on %q is named more than once. One team appears at most once per row" $key $g.team $e.path) }}
+{{- end }}
+{{- $_ := set $seenTeams $g.team true }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- /* ADR-0962 ruling 5, made mechanical: every root grants `administrators` readWrite. Only when `administrators` is declared; its absence is the schema's refusal. */}}
+{{- if hasKey $names "administrators" }}
+{{- range $i, $root := $r.roots }}
+{{- $held := false }}
+{{- range $root.grants }}
+{{- if and (eq .team "administrators") (eq .level "readWrite") }}
+{{- $held = true }}
+{{- end }}
+{{- end }}
+{{- if not $held }}
+{{- fail (printf "registry.roots[%d] %q carries no readWrite grant for the team \"administrators\". With registry.teams declared every root grants it (ADR-0962 ruling 5): add {team: administrators, level: readWrite} to registry.roots[%d].grants" $i $root.path $i) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /*
 THE SIZE GUARD (ADR-0705), below the 1 MiB a ConfigMap holds. The binary
 refuses at the same number (`src/registry.rs`, `MAX_BYTES`); `tests/chart.rs`
 pins the two equal.
@@ -119,11 +220,17 @@ is no cleartext and no identity-less configuration that could work.
 {{- end }}
 
 {{- /*
-THE JOB'S DEADLINE MUST OUTLAST THE RETRY LOOP, or Kubernetes kills a run that
-was still allowed to wait for `project`. The loop's worst case is every attempt
-timing out: attempts x (requestTimeoutSeconds + backoffSeconds).
+THE JOB'S DEADLINE MUST OUTLAST THE RETRY LOOPS, or Kubernetes kills a run that
+was still allowed to wait. One loop's worst case is every attempt timing out:
+attempts x (requestTimeoutSeconds + backoffSeconds). A run that declares teams
+makes TWO calls in sequence, SyncTeams to iam and then SyncProjects to project,
+each with its own loop, so the bound is their sum; without teams it is
+project's alone.
 */}}
 {{- $loop := mul (int .Values.sync.attempts) (add (int .Values.project.requestTimeoutSeconds) (int .Values.sync.backoffSeconds)) }}
+{{- if $hasTeams }}
+{{- $loop = add $loop (mul (int .Values.sync.attempts) (add (int .Values.iam.requestTimeoutSeconds) (int .Values.sync.backoffSeconds))) }}
+{{- end }}
 {{- if lt (int .Values.job.activeDeadlineSeconds) (int $loop) }}
-{{- fail (printf "job.activeDeadlineSeconds (%d) is shorter than the retry loop's worst case, sync.attempts x (project.requestTimeoutSeconds + sync.backoffSeconds) = %d. Raise the deadline or shorten the loop" (int .Values.job.activeDeadlineSeconds) (int $loop)) }}
+{{- fail (printf "job.activeDeadlineSeconds (%d) is shorter than the retry loop's worst case, sync.attempts x (project.requestTimeoutSeconds + sync.backoffSeconds), plus the same for iam.requestTimeoutSeconds when registry.teams is declared = %d. Raise the deadline or shorten the loop" (int .Values.job.activeDeadlineSeconds) (int $loop)) }}
 {{- end }}

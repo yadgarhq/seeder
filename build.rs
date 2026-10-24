@@ -34,6 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[
                 "proto/yadgar/common/v1/common.proto",
                 "proto/yadgar/project/v1/project.proto",
+                "proto/yadgar/iam/v1/iam.proto",
             ],
             &includes[..],
         )?;

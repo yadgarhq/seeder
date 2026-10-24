@@ -53,12 +53,42 @@ project:
     # `project.host`. Empty: verify against the host.
     domain: ""
 
+# THE SECOND UPSTREAM, USED ONLY WHEN `registry.teams` IS DECLARED
+# (plans/team-access.md stage 6): the seeder's `SyncTeams` goes to `iam`, then
+# `SyncProjects` to `project`. NEVER `iam-db` (ADR-0938). With `teams` absent the
+# Job renders no `IAM_*` variable and mounts no iam authority, so today's
+# installs render and run exactly as before; `iam.tls.caSecret` has no default
+# (ADR-0854) and is required only when teams are declared. The seeder presents
+# the SAME client leaf to iam as to project (`project.tls.clientCertSecret`,
+# `seeder-client-tls`): iam admits SyncTeams from the leaf `seeder-caller`, so
+# no second leaf exists.
+iam:
+  # iam's HEADLESS Service (D23).
+  host: iam
+  # 50052, THE MODULE PORT — iam-db's is 50051.
+  port: 50052
+  # HOW LONG ONE SyncTeams MAY WAIT, in whole seconds, BOUNDED 14..=59 by
+  # yadgar-dial like `project.requestTimeoutSeconds`. 45, ABOVE iam's own hop to
+  # iam-db, for the same reason project's is above project-db's.
+  requestTimeoutSeconds: 45
+  tls:
+    # REQUIRED WHEN TEAMS ARE DECLARED, WITH NO DEFAULT (ADR-0854): the Secret
+    # holding the authority that signed iam's serving certificate. The estate's
+    # is `iam-tls`.
+    #
+    # caSecret: iam-tls
+    caSecretKey: ca.crt
+    # The name iam's certificate is verified against, when it is NOT `iam.host`.
+    # Empty: verify against the host.
+    domain: ""
+
 # HOW A `project` THAT ANSWERS UNAVAILABLE IS RETRIED. Only UNAVAILABLE: every
 # other answer is a refusal the same declaration would get again, and it ends
 # the run non-zero.
 sync:
-  # Total attempts, the first included. 10 x (45 s + 6 s) = 510 s worst case,
-  # which `job.activeDeadlineSeconds` must cover (a render check holds that).
+  # Total attempts, the first included, FOR EACH CALL. 10 x (45 s + 6 s) = 510 s
+  # worst case per call, which `job.activeDeadlineSeconds` must cover (a render
+  # check holds that: both calls when teams are declared, one when not).
   attempts: 10
   # At least yadgar-dial's 5 s re-resolve interval, so a retry can see an
   # endpoint set the failed attempt could not.
@@ -68,8 +98,11 @@ job:
   # Pod retries of one sync. A refusal fails every pod the same way, so this is
   # for a pod lost to its node, not for a bad declaration.
   backoffLimit: 2
-  # The outer bound on one sync, every pod and retry included.
-  activeDeadlineSeconds: 600
+  # The outer bound on one sync, every pod and retry included. 1200 covers the
+  # worst case of BOTH calls at the defaults, 2 x 510 s (iam, then project), so a
+  # declaration that names teams renders without raising it; with `teams` absent
+  # the render check still counts one call only.
+  activeDeadlineSeconds: 1200
 
 # THE DECLARATION (plans/the-d35-seeder.md, "The declaration"). REQUIRED, WITH
 # NO DEFAULT, AND SO ABSENT HERE ON PURPOSE (ADR-0569 as amended by ADR-0705):
@@ -91,3 +124,19 @@ job:
 #   # REQUIRED, NO DEFAULT (ADR-0939). false keeps the store's guard on: a sync
 #   # that would archive more than half of the active org rows is refused.
 #   allowMassArchive: false
+#
+#   # TEAM ACCESS (plans/team-access.md §2). OPTIONAL AS A BLOCK, all or nothing:
+#   # with `teams` absent or empty no `grants` key may appear anywhere and the
+#   # seeder makes no SyncTeams call (the transition rule). With `teams`
+#   # declared: a team `administrators` with at least one member (the chart
+#   # schema), every root granting it readWrite, names unique, every grant
+#   # naming a declared team, `allowMassRevoke` set explicitly (no default;
+#   # false keeps the store's mass-revoke guard on), and `iam.tls.caSecret` set.
+#   # Members are bare lowercase uuidv7s, the `account_segment` GET /auth/whoami
+#   # answers; the seeder sends `yadgar:user:<uuid>`.
+#   teams:
+#     - name: administrators
+#       members: [0192f3c4-aaaa-7bbb-8ccc-0123456789ab]
+#   allowMassRevoke: false
+#   # and on a root or project: grants: [{team: administrators, level: readWrite}]
+#   # with level one of read | readWrite.
