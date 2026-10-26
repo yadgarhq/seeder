@@ -1,5 +1,6 @@
 //! The knobs: every one required, none defaulted, and no key that could name
-//! anything but `project` (plans/the-d35-seeder.md stage 5, test 5).
+//! anything but `project` and, once teams are declared, `iam` (plans/the-d35-seeder.md
+//! stage 5, test 5; plans/team-access.md stage 6).
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -25,6 +26,22 @@ fn complete() -> Vec<(&'static str, &'static str)> {
         ("SEEDER_SYNC_ATTEMPTS", "10"),
         ("SEEDER_SYNC_BACKOFF_SECONDS", "6"),
     ]
+}
+
+/// The iam block the chart renders ONLY when `registry.teams` is declared.
+fn iam() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("IAM_HOST", "iam"),
+        ("IAM_PORT", "50052"),
+        ("IAM_REQUEST_TIMEOUT_SECONDS", "45"),
+        ("IAM_TLS_CA_FILE", "/var/run/config/iam-ca/ca.pem"),
+    ]
+}
+
+fn complete_with_iam() -> Vec<(&'static str, &'static str)> {
+    let mut vars = complete();
+    vars.extend(iam());
+    vars
 }
 
 fn read(vars: &[(&str, &str)]) -> Result<Config, ConfigError> {
@@ -61,13 +78,14 @@ fn a_complete_environment_is_read_verbatim() {
     assert_eq!(c.retry.backoff, Duration::from_secs(6));
 }
 
-/// Stage 5, test 5. THE KEYS A REAL READ LOOKS UP, recorded rather than
-/// declared, equal [`KEYS`] — and none of them can name `project-db` or any
-/// other host. A key added to the read and not to `KEYS` is red here.
+/// Stage 5, test 5, as team access amends it. THE KEYS A REAL READ LOOKS UP,
+/// recorded rather than declared, equal [`KEYS`] — and the only host keys are
+/// `project`'s and `iam`'s (ADR-0936, ADR-0938: no `-db`, no third upstream). A
+/// key added to the read and not to `KEYS` is red here.
 #[test]
-fn the_only_upstream_the_configuration_can_name_is_project() {
+fn the_only_upstreams_the_configuration_can_name_are_project_and_iam() {
     let asked = RefCell::new(BTreeSet::new());
-    let vars = complete();
+    let vars = complete_with_iam();
     Config::from_lookup(|k| {
         asked.borrow_mut().insert(k.to_string());
         vars.iter()
@@ -81,8 +99,8 @@ fn the_only_upstream_the_configuration_can_name_is_project() {
     for key in &asked {
         assert!(!key.contains("DB"), "{key} could name a -db (ADR-0936)");
         assert!(
-            !key.ends_with("_HOST") || key == "PROJECT_HOST",
-            "{key} is a second upstream host"
+            !key.ends_with("_HOST") || key == "PROJECT_HOST" || key == "IAM_HOST",
+            "{key} is a third upstream host"
         );
     }
 }
@@ -161,4 +179,76 @@ fn a_backoff_below_the_re_resolve_interval_is_refused() {
         .to_string();
     assert!(err.contains("re-resolve"), "{err}");
     read(&with("SEEDER_SYNC_BACKOFF_SECONDS", "5")).expect("the floor itself is legal");
+}
+
+/// Red 5's config half: with `teams` absent the chart renders no `IAM_*`, and the
+/// binary reads a complete environment without them. It dials no iam.
+#[test]
+fn without_iam_keys_the_config_names_no_iam() {
+    assert_eq!(read(&complete()).expect("complete").iam, None);
+}
+
+#[test]
+fn an_iam_block_is_read_verbatim_and_reuses_the_seeders_client_leaf() {
+    let c = read(&complete_with_iam()).expect("complete with iam");
+    let iam = c.iam.expect("iam");
+    assert_eq!(iam.host, "iam");
+    assert_eq!(iam.port, 50052);
+    assert_eq!(iam.request_timeout, Duration::from_secs(45));
+    assert_eq!(iam.ca_file.to_str(), Some("/var/run/config/iam-ca/ca.pem"));
+    assert_eq!(iam.domain, None);
+}
+
+/// Once `IAM_HOST` names iam, every other iam key is required and names itself
+/// and the chart key that renders it.
+#[test]
+fn every_iam_knob_refuses_when_absent_and_names_itself() {
+    for (key, _) in iam() {
+        let vars: Vec<_> = complete_with_iam()
+            .into_iter()
+            .filter(|(k, _)| *k != key)
+            .collect();
+        if key == "IAM_HOST" {
+            continue; // absent IAM_HOST is "no iam", tested above.
+        }
+        let err = read(&vars).expect_err(key).to_string();
+        assert!(err.contains(key), "the refusal must name {key}: {err}");
+        assert!(
+            err.contains("iam."),
+            "the refusal must name the chart key: {err}"
+        );
+    }
+}
+
+#[test]
+fn an_empty_iam_host_is_refused_not_read_as_absent() {
+    let mut vars: Vec<_> = complete_with_iam()
+        .into_iter()
+        .filter(|(k, _)| *k != "IAM_HOST")
+        .collect();
+    vars.push(("IAM_HOST", ""));
+    let err = read(&vars).unwrap_err().to_string();
+    assert!(err.contains("IAM_HOST") && err.contains("EMPTY"), "{err}");
+}
+
+#[test]
+fn the_iam_tls_domain_is_an_optional_override() {
+    let mut vars = complete_with_iam();
+    vars.push(("IAM_TLS_DOMAIN", "iam.yadgar.svc"));
+    let c = read(&vars).unwrap();
+    assert_eq!(c.iam.unwrap().domain.as_deref(), Some("iam.yadgar.svc"));
+}
+
+/// yadgar-dial's own range: 14..=59 seconds, for iam's timeout as for project's.
+#[test]
+fn an_iam_request_timeout_outside_dial_s_range_is_refused() {
+    for bad in ["0", "13", "60"] {
+        let mut vars: Vec<_> = complete_with_iam()
+            .into_iter()
+            .filter(|(k, _)| *k != "IAM_REQUEST_TIMEOUT_SECONDS")
+            .collect();
+        vars.push(("IAM_REQUEST_TIMEOUT_SECONDS", bad));
+        let err = read(&vars).unwrap_err().to_string();
+        assert!(err.contains("IAM_REQUEST_TIMEOUT_SECONDS"), "{bad}: {err}");
+    }
 }

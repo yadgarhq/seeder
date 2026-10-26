@@ -69,6 +69,22 @@ spec:
             - name: PROJECT_TLS_DOMAIN
               value: {{ . | quote }}
             {{- end }}
+            {{- if eq (include "seeder.hasTeams" .) "true" }}
+            # THE SECOND UPSTREAM, only when teams are declared: iam's SyncTeams
+            # (never iam-db, ADR-0938). The client leaf is the one above.
+            - name: IAM_HOST
+              value: {{ required "iam.host names iam's headless Service; see the chart's values.yaml" .Values.iam.host | quote }}
+            - name: IAM_PORT
+              value: {{ required "iam.port is iam's gRPC port, 50052; see the chart's values.yaml" .Values.iam.port | quote }}
+            - name: IAM_REQUEST_TIMEOUT_SECONDS
+              value: {{ .Values.iam.requestTimeoutSeconds | quote }}
+            - name: IAM_TLS_CA_FILE
+              value: /var/run/config/iam-ca/ca.pem
+            {{- with .Values.iam.tls.domain }}
+            - name: IAM_TLS_DOMAIN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             - name: SEEDER_REGISTRY_FILE
               value: /etc/seeder/registry.json
             - name: SEEDER_SYNC_ATTEMPTS
@@ -88,6 +104,11 @@ spec:
             - name: project-ca
               mountPath: /var/run/config/project-ca
               readOnly: true
+            {{- if eq (include "seeder.hasTeams" .) "true" }}
+            - name: iam-ca
+              mountPath: /var/run/config/iam-ca
+              readOnly: true
+            {{- end }}
             - name: client-cert
               mountPath: /var/run/secrets/client-cert
               readOnly: true
@@ -107,6 +128,15 @@ spec:
             items:
               - key: {{ required "project.tls.caSecretKey names the key inside project.tls.caSecret that holds the CA bundle; see the chart's values.yaml" .Values.project.tls.caSecretKey | quote }}
                 path: ca.pem
+        {{- if eq (include "seeder.hasTeams" .) "true" }}
+        # Only when teams are declared; iam's authority, never required otherwise.
+        - name: iam-ca
+          secret:
+            secretName: {{ .Values.iam.tls.caSecret }}
+            items:
+              - key: {{ required "iam.tls.caSecretKey names the key inside iam.tls.caSecret that holds the CA bundle; see the chart's values.yaml" .Values.iam.tls.caSecretKey | quote }}
+                path: ca.pem
+        {{- end }}
         - name: client-cert
           secret:
             secretName: {{ .Values.project.tls.clientCertSecret }}

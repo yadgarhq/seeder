@@ -28,6 +28,10 @@ use crate::registry::Declaration;
 
 /// The request for one sync.
 ///
+/// `allow_mass_revoke` is set from the declaration, which is `false` unless
+/// `registry.teams` is declared and the flag is explicitly `true`. With teams
+/// absent the request is what it was before team access: no grant, flag unset.
+///
 /// **EVERY FIELD IS SET BY NAME AND NONE BY `..Default::default()`.** The
 /// seeder vendors the contract at the SAME tag `project` vendors
 /// (`PROTO_VERSION`). A field the seeder set that `project` did not vendor
@@ -41,6 +45,7 @@ pub fn request(declaration: &Declaration, request_id: &str) -> ProjectServiceSyn
         roots: declaration.roots.clone(),
         projects: declaration.projects.clone(),
         allow_mass_archive: declaration.allow_mass_archive,
+        allow_mass_revoke: declaration.allow_mass_revoke,
     }
 }
 
@@ -55,7 +60,7 @@ pub fn request(declaration: &Declaration, request_id: &str) -> ProjectServiceSyn
 /// - `owner_reads_own_record` (the last field `common.proto` declares at the
 ///   vendored tag) is absent: it is ADR-0522's record-read policy, and a sync
 ///   reads no record. The store's sync never consults it.
-fn scope(request_id: &str) -> Scope {
+pub(crate) fn scope(request_id: &str) -> Scope {
     Scope {
         user_id: PRINCIPAL.to_string(),
         project_id: String::new(),
@@ -137,13 +142,13 @@ pub async fn send(
     }
 }
 
-enum Next {
+pub(crate) enum Next {
     Retry,
     Stop(SyncError),
 }
 
 /// The retry decision, apart from the network so it can be read in one place.
-fn next(status: &Status, attempt: u32, retry: Retry) -> Next {
+pub(crate) fn next(status: &Status, attempt: u32, retry: Retry) -> Next {
     let message = status.message().to_string();
     match status.code() {
         Code::Unavailable if attempt < retry.attempts => Next::Retry,

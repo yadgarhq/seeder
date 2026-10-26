@@ -8,15 +8,46 @@ Read through `seeder.registry`, so the presence check runs first.
 */}}
 {{- $_ := include "seeder.registry" . -}}
 {{- $r := .Values.registry -}}
+{{- $teams := eq (include "seeder.hasTeams" .) "true" -}}
 {{- $rows := dict "roots" list "projects" list -}}
 {{- range $list := list "roots" "projects" -}}
 {{- $out := list -}}
 {{- range (get $r $list) -}}
-{{- $out = append $out (dict "path" .path "displayName" (.displayName | default "") "sourceRepo" .sourceRepo) -}}
+{{- $row := dict "path" .path "displayName" (.displayName | default "") "sourceRepo" .sourceRepo -}}
+{{- /*
+With teams declared every row carries `grants`, `[]` when it declares none, so
+the binary reads one shape. Without teams NO `grants` key is rendered: the
+document is exactly what it was before team access (the transition rule). A
+non-list `grants` or a non-map entry renders as empty here; `render-checks.yaml`
+refuses it by name, and this partial must not be the thing that crashes first.
+*/ -}}
+{{- if $teams -}}
+{{- $grants := list -}}
+{{- if kindIs "slice" .grants -}}
+{{- range .grants -}}
+{{- if kindIs "map" . -}}
+{{- $grants = append $grants (dict "team" .team "level" .level) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $row "grants" $grants -}}
+{{- end -}}
+{{- $out = append $out $row -}}
 {{- end -}}
 {{- $_ := set $rows $list $out -}}
 {{- end -}}
-{{- dict "roots" $rows.roots "projects" $rows.projects "allowMassArchive" $r.allowMassArchive | toJson -}}
+{{- $doc := dict "roots" $rows.roots "projects" $rows.projects "allowMassArchive" $r.allowMassArchive -}}
+{{- if $teams -}}
+{{- $listed := list -}}
+{{- range $r.teams -}}
+{{- if kindIs "map" . -}}
+{{- $listed = append $listed (dict "name" .name "members" (.members | default list)) -}}
+{{- end -}}
+{{- end -}}
+{{- $_ := set $doc "teams" $listed -}}
+{{- $_ := set $doc "allowMassRevoke" $r.allowMassRevoke -}}
+{{- end -}}
+{{- $doc | toJson -}}
 {{- end -}}
 
 {{- /*
@@ -31,4 +62,17 @@ quiet skip (ADR-0569 as amended by ADR-0705).
 */}}
 {{- define "seeder.registry" -}}
 {{- required "registry is required with no default (ADR-0569, ADR-0857). Declare the organisation's registry.roots, registry.projects and registry.allowMassArchive; through the parent chart the key is seeder.registry (plans/the-d35-seeder.md, \"The declaration\")" .Values.registry | kindOf -}}
+{{- end -}}
+
+{{- /*
+"true" when `registry.teams` is a non-empty list, "" otherwise. An EMPTY list is
+the transition rule too (plans/team-access.md §2): no team, no grant, no iam. A
+`teams` that is not a list renders as absent here and is refused by name in
+`render-checks.yaml`.
+*/}}
+{{- define "seeder.hasTeams" -}}
+{{- $r := .Values.registry -}}
+{{- if and (kindIs "map" $r) (kindIs "slice" $r.teams) -}}
+{{- if $r.teams }}true{{ end -}}
+{{- end -}}
 {{- end -}}
