@@ -53,7 +53,7 @@ pub const TLS_CLIENT_KEY_FILE: &str = "PROJECT_TLS_CLIENT_KEY_FILE";
 pub const TLS_DOMAIN: &str = "PROJECT_TLS_DOMAIN";
 pub const SYNC_ATTEMPTS: &str = "SEEDER_SYNC_ATTEMPTS";
 pub const SYNC_BACKOFF: &str = "SEEDER_SYNC_BACKOFF_SECONDS";
-/// The `IAM_*` block, rendered only when `registry.teams` is declared. The
+/// The `IAM_*` block, rendered on every run (`registry.teams` is required). The
 /// client leaf is the seeder's one (`PROJECT_TLS_CLIENT_*`): `seeder-client-tls`
 /// is reused for iam, no second leaf.
 pub const IAM_HOST: &str = "IAM_HOST";

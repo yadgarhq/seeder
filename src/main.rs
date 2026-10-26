@@ -6,13 +6,11 @@
 //! being opened (plans/the-d35-seeder.md stage 5, test 1). Only then is anything
 //! dialled, the request_id minted, and the calls sent.
 //!
-//! **TEAMS FIRST, THEN PROJECTS (plans/team-access.md stage 6).** When the
-//! declaration names teams, `iam` gets `SyncTeams` and `project` gets
-//! `SyncProjects` only after `SyncTeams` succeeded. A refused `SyncTeams` ends
-//! the run: sending the new grants beside the old member set can admit a caller
-//! neither declaration admits. When the declaration names no team (the
-//! transition rule) there is no `SyncTeams`, and the run is what it was before
-//! team access.
+//! **TEAMS FIRST, THEN PROJECTS (plans/team-access.md stage 6).** `iam` gets
+//! `SyncTeams` and `project` gets `SyncProjects` only after `SyncTeams`
+//! succeeded. A refused `SyncTeams` ends the run: sending the new grants beside
+//! the old member set can admit a caller neither declaration admits. A
+//! declaration that names no team is refused before any dial (stage 12).
 //!
 //! **EXIT 0 ONLY WHEN THE STORES APPLIED THE DECLARATION AND THE COUNTS AGREE.**
 //! Every refusal, an exhausted retry, every configuration error, and an applied
@@ -68,7 +66,7 @@ async fn run() -> Result<(), String> {
     identity::check_client_leaf(&config.tls.client_cert_file).map_err(|e| e.to_string())?;
     // ADR-0523-UNWATCHED: the declaration is read once per run; a changed ConfigMap is a new Job (ADR-0940).
     let declaration = registry::read(&config.registry_file).map_err(|e| e.to_string())?;
-    let iam = iam_for(&declaration, &config)?;
+    let iam = iam_for(&config)?;
     let grants_sent = grants_sent(&declaration);
     tracing::info!(
         roots = declaration.roots.len(),
@@ -83,13 +81,7 @@ async fn run() -> Result<(), String> {
     // ONE RUN IS ONE SYNC: one id on both calls (ADR-0942).
     let request_id = sync::mint_request_id();
 
-    let teams = match iam {
-        None => {
-            tracing::info!("no team is declared; SyncTeams is not called (the transition rule)");
-            None
-        }
-        Some(iam) => Some(sync_teams(&config, iam, &declaration, &request_id).await?),
-    };
+    let teams = sync_teams(&config, iam, &declaration, &request_id).await?;
 
     let channel = upstream::connect(&config)
         .await
@@ -110,16 +102,13 @@ async fn run() -> Result<(), String> {
                 %request_id,
                 code = ?e.code(),
                 message = e.message(),
-                teams_applied = teams.is_some(),
+                teams_applied = true,
                 "project did not apply the sync"
             );
-            return Err(match teams {
-                None => e.to_string(),
-                Some(_) => format!(
-                    "{e}. SyncTeams was applied, so the new members now pair with the old \
-                     grants until the next green sync"
-                ),
-            });
+            return Err(format!(
+                "{e}. SyncTeams was applied, so the new members now pair with the old \
+                 grants until the next green sync"
+            ));
         }
     };
     tracing::info!(
@@ -136,7 +125,7 @@ async fn run() -> Result<(), String> {
         "sync applied"
     );
 
-    let judgement = outcome::judge(grants_sent, teams.as_ref(), &counts);
+    let judgement = outcome::judge(grants_sent, Some(&teams), &counts);
     for id in &judgement.pending {
         tracing::info!(
             %request_id,
@@ -152,18 +141,15 @@ async fn run() -> Result<(), String> {
     }
 }
 
-/// The iam transport the declaration needs: `None` under the transition rule, a
-/// refusal naming the `iam.*` chart keys when teams are declared and the chart
-/// rendered no `IAM_*` block.
-fn iam_for<'a>(declaration: &Declaration, config: &'a Config) -> Result<Option<&'a Iam>, String> {
-    if declaration.teams.is_empty() {
-        return Ok(None);
-    }
-    config.iam.as_ref().map(Some).ok_or_else(|| {
-        "registry.teams is declared, and IAM_HOST is NOT SET. The chart renders the IAM_* \
-         variables from iam.host, iam.port, iam.requestTimeoutSeconds and iam.tls.caSecret when \
-         teams are declared; this run refuses rather than skip SyncTeams, which would sync \
-         grants for teams iam does not hold"
+/// The iam transport every declaration needs, since every declaration names
+/// teams: a refusal naming the `iam.*` chart keys when the chart rendered no
+/// `IAM_*` block.
+fn iam_for(config: &Config) -> Result<&Iam, String> {
+    config.iam.as_ref().ok_or_else(|| {
+        "IAM_HOST is NOT SET. Every declaration names teams, so the chart renders the IAM_* \
+         variables from iam.host, iam.port, iam.requestTimeoutSeconds and iam.tls.caSecret; \
+         this run refuses rather than skip SyncTeams, which would sync grants for teams iam \
+         does not hold"
             .to_string()
     })
 }

@@ -12,7 +12,8 @@ use yadgar_seeder::pb::yadgar::project::v1::GrantLevel;
 const ADMIN: &str = "0192f3c4-aaaa-7bbb-8ccc-0123456789ab";
 const RUNNER: &str = "0192f3c4-bbbb-7bbb-9ccc-0123456789ab";
 
-/// Today's argocd values: no `teams`, no `grants`, no `allowMassRevoke`.
+/// The declaration before team access, and the one a truncated render leaves:
+/// no `teams`, no `grants`, no `allowMassRevoke`. Stage 12 refuses it.
 const TODAY: &str = r#"{
   "roots": [{"path": "yadgarhq", "displayName": "", "sourceRepo": "yadgarhq/argocd"}],
   "projects": [
@@ -91,46 +92,22 @@ async fn green(registry: &str) -> Rig {
     .await
 }
 
-/// Red 5: `teams` absent and no grants: no `SyncTeams` call, `SyncProjects`
-/// sent with empty grant sets and the revoke flag unset, exactly as before team
-/// access. The iam fake is up and the `IAM_*` block is in the environment, so a
-/// call that should not happen could happen.
+/// Stage 12 (the transition rule removed): `teams` absent is refused, the
+/// refusal names the key, and neither upstream is dialled. Both fakes are up and
+/// the `IAM_*` block is in the environment, so a call that should not happen
+/// could happen.
 #[tokio::test(flavor = "multi_thread")]
-async fn red_05_teams_absent_makes_no_syncteams_call_and_sends_empty_grants() {
-    let rig = rig(TODAY, vec![], vec![Ok(counts_with_grants(0))]).await;
+async fn stage_12_teams_absent_is_refused_naming_the_key_and_dials_nothing() {
+    let rig = rig(TODAY, vec![], vec![]).await;
 
     let out = run(rig.vars.clone(), SYNC).await;
 
-    assert!(out.status.success(), "{}", text(&out));
-    assert!(rig.iam.received().is_empty(), "no SyncTeams call");
-    assert_eq!(rig.order.calls(), ["SyncProjects"]);
-    let req = &rig.project.received()[0].request;
-    assert!(req
-        .roots
-        .iter()
-        .chain(&req.projects)
-        .all(|p| p.grants.is_empty()));
-    assert!(!req.allow_mass_revoke);
-    assert!(
-        !text(&out).contains("sending SyncTeams"),
-        "no SyncTeams line in the log:\n{}",
-        text(&out)
-    );
-}
-
-/// Red 5 again, as the Job runs it before argocd declares teams: the chart
-/// renders no `IAM_*` block at all, and the run still succeeds.
-#[tokio::test(flavor = "multi_thread")]
-async fn red_05_teams_absent_needs_no_iam_configuration() {
-    let pki = Pki::new();
-    let project = Fake::answering(vec![]);
-    let port = serve(&pki, project.clone()).await;
-    let scratch = Scratch::new();
-
-    let out = run(env(&scratch, &pki, port, "seeder-caller", TODAY), SYNC).await;
-
-    assert!(out.status.success(), "{}", text(&out));
-    assert_eq!(project.received().len(), 1);
+    let log = text(&out);
+    assert!(!out.status.success(), "must refuse:\n{log}");
+    assert!(log.contains("registry.teams"), "must name `teams`:\n{log}");
+    assert!(rig.order.calls().is_empty(), "nothing dialled");
+    assert!(rig.iam.received().is_empty());
+    assert!(rig.project.received().is_empty());
 }
 
 /// The whole path: teams first, then projects, one request_id on both, both

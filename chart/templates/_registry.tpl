@@ -15,10 +15,9 @@ Read through `seeder.registry`, so the presence check runs first.
 {{- range (get $r $list) -}}
 {{- $row := dict "path" .path "displayName" (.displayName | default "") "sourceRepo" .sourceRepo -}}
 {{- /*
-With teams declared every row carries `grants`, `[]` when it declares none, so
-the binary reads one shape. Without teams NO `grants` key is rendered: the
-document is exactly what it was before team access (the transition rule). A
-non-list `grants` or a non-map entry renders as empty here; `render-checks.yaml`
+Every row carries `grants`, `[]` when it declares none, so the binary reads one
+shape (`teams` is required, so a render without it is refused in
+`render-checks.yaml` before this partial matters). A non-list `grants` or a non-map entry renders as empty here; `render-checks.yaml`
 refuses it by name, and this partial must not be the thing that crashes first.
 */ -}}
 {{- if $teams -}}
@@ -66,7 +65,7 @@ quiet skip (ADR-0569 as amended by ADR-0705).
 
 {{- /*
 "true" when `registry.teams` is a non-empty list, "" otherwise. An EMPTY list is
-the transition rule too (plans/team-access.md §2): no team, no grant, no iam. A
+refused like an absent one (plans/team-access.md stage 12). A
 `teams` that is not a list renders as absent here and is refused by name in
 `render-checks.yaml`.
 */}}

@@ -3,17 +3,57 @@
 
 mod support;
 
-use support::{counts, env, free_port, run, serve, serve_at, text, Fake, Pki, Scratch};
+use support::iam::{serve_iam, FakeIam, Order};
+use support::{
+    counts_with_grants, env_iam_as, free_port, run, serve, serve_at, text, Fake, Pki, Scratch,
+};
 use tonic::Status;
+
+/// What `project` answers once it parses the one grant `REGISTRY` carries.
+fn counts(
+    inserted: u32,
+    updated: u32,
+    archived: u32,
+    reactivated: u32,
+    unchanged: u32,
+) -> yadgar_seeder::pb::yadgar::project::v1::ProjectServiceSyncProjectsResponse {
+    yadgar_seeder::pb::yadgar::project::v1::ProjectServiceSyncProjectsResponse {
+        inserted,
+        updated,
+        archived,
+        reactivated,
+        unchanged,
+        ..counts_with_grants(1)
+    }
+}
+
+/// The environment the chart renders: every declaration names teams (stage 12),
+/// so the iam fake is up beside `project`, answering cleanly.
+async fn env(
+    scratch: &Scratch,
+    pki: &Pki,
+    port: u16,
+    common_name: &str,
+    registry: &str,
+) -> Vec<(String, String)> {
+    let iam = FakeIam::answering(vec![], &Order::default());
+    let iam_port = serve_iam(pki, iam).await;
+    env_iam_as(scratch, pki, port, iam_port, common_name, registry)
+}
 
 /// One root, two projects, the guard on.
 const REGISTRY: &str = r#"{
-  "roots": [{"path": "yadgarhq", "displayName": "", "sourceRepo": "yadgarhq/argocd"}],
+  "roots": [{"path": "yadgarhq", "displayName": "", "sourceRepo": "yadgarhq/argocd",
+    "grants": [{"team": "administrators", "level": "readWrite"}]}],
   "projects": [
     {"path": "yadgarhq/gateway", "displayName": "gateway", "sourceRepo": "yadgarhq/gateway"},
     {"path": "yadgarhq/project-db", "displayName": "", "sourceRepo": "yadgarhq/project-db"}
   ],
-  "allowMassArchive": false
+  "teams": [
+    {"name": "administrators", "members": ["0192f3c4-aaaa-7bbb-8ccc-0123456789ab"]}
+  ],
+  "allowMassArchive": false,
+  "allowMassRevoke": false
 }"#;
 
 const SYNC: &[&str] = &["sync-projects"];
@@ -31,7 +71,11 @@ async fn one_sync_carries_the_declaration_exactly_under_the_seeder_s_identity() 
     let port = serve(&pki, fake.clone()).await;
     let scratch = Scratch::new();
 
-    let out = run(env(&scratch, &pki, port, "seeder-caller", REGISTRY), SYNC).await;
+    let out = run(
+        env(&scratch, &pki, port, "seeder-caller", REGISTRY).await,
+        SYNC,
+    )
+    .await;
 
     assert!(
         out.status.success(),
@@ -110,7 +154,11 @@ async fn the_mass_archive_flag_reaches_the_wire_as_declared() {
         r#""allowMassArchive": true"#,
     );
 
-    let out = run(env(&scratch, &pki, port, "seeder-caller", &registry), SYNC).await;
+    let out = run(
+        env(&scratch, &pki, port, "seeder-caller", &registry).await,
+        SYNC,
+    )
+    .await;
 
     assert!(out.status.success(), "{}", text(&out));
     assert!(fake.received()[0].request.allow_mass_archive);
@@ -125,7 +173,11 @@ async fn a_malformed_registry_exits_non_zero_without_dialling() {
     let scratch = Scratch::new();
     let poison = REGISTRY.replace("\"path\": \"yadgarhq\"", "\"path\": \"yadgarhq/two\"");
 
-    let out = run(env(&scratch, &pki, port, "seeder-caller", &poison), SYNC).await;
+    let out = run(
+        env(&scratch, &pki, port, "seeder-caller", &poison).await,
+        SYNC,
+    )
+    .await;
 
     assert!(!out.status.success(), "must refuse:\n{}", text(&out));
     assert!(text(&out).contains("\"yadgarhq/two\""), "{}", text(&out));
@@ -141,7 +193,7 @@ async fn a_registry_that_is_not_json_exits_non_zero_without_dialling() {
     let scratch = Scratch::new();
 
     let out = run(
-        env(&scratch, &pki, port, "seeder-caller", "{ roots: ["),
+        env(&scratch, &pki, port, "seeder-caller", "{ roots: [").await,
         SYNC,
     )
     .await;
@@ -184,7 +236,11 @@ async fn every_refusal_exits_non_zero_after_one_call_and_logs_code_and_message()
         let port = serve(&pki, fake.clone()).await;
         let scratch = Scratch::new();
 
-        let out = run(env(&scratch, &pki, port, "seeder-caller", REGISTRY), SYNC).await;
+        let out = run(
+            env(&scratch, &pki, port, "seeder-caller", REGISTRY).await,
+            SYNC,
+        )
+        .await;
 
         let log = text(&out);
         assert!(!out.status.success(), "{code} must fail the run:\n{log}");
@@ -210,7 +266,11 @@ async fn unavailable_is_retried_with_the_same_request_id_then_succeeds() {
     let port = serve(&pki, fake.clone()).await;
     let scratch = Scratch::new();
 
-    let out = run(env(&scratch, &pki, port, "seeder-caller", REGISTRY), SYNC).await;
+    let out = run(
+        env(&scratch, &pki, port, "seeder-caller", REGISTRY).await,
+        SYNC,
+    )
+    .await;
 
     assert!(out.status.success(), "{}", text(&out));
     let received = fake.received();
@@ -238,7 +298,7 @@ async fn a_project_that_is_not_serving_yet_is_retried_until_it_is() {
     let fake = Fake::answering(vec![Ok(counts(1, 0, 0, 0, 0))]);
     let port = free_port().await;
     let scratch = Scratch::new();
-    let vars = env(&scratch, &pki, port, "seeder-caller", REGISTRY);
+    let vars = env(&scratch, &pki, port, "seeder-caller", REGISTRY).await;
 
     let running = tokio::spawn(run(vars, SYNC));
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -268,7 +328,7 @@ async fn unavailable_on_every_attempt_exits_non_zero_after_the_bound() {
     ]);
     let port = serve(&pki, fake.clone()).await;
     let scratch = Scratch::new();
-    let mut vars = env(&scratch, &pki, port, "seeder-caller", REGISTRY);
+    let mut vars = env(&scratch, &pki, port, "seeder-caller", REGISTRY).await;
     for (k, v) in vars.iter_mut() {
         if k == "SEEDER_SYNC_ATTEMPTS" {
             *v = "2".to_string();
@@ -292,7 +352,11 @@ async fn another_module_s_leaf_is_refused_before_any_dial() {
     let port = serve(&pki, fake.clone()).await;
     let scratch = Scratch::new();
 
-    let out = run(env(&scratch, &pki, port, "project-caller", REGISTRY), SYNC).await;
+    let out = run(
+        env(&scratch, &pki, port, "project-caller", REGISTRY).await,
+        SYNC,
+    )
+    .await;
 
     let log = text(&out);
     assert!(!out.status.success(), "{log}");
@@ -314,7 +378,11 @@ async fn a_missing_or_unknown_subcommand_is_refused_without_dialling() {
         let port = serve(&pki, fake.clone()).await;
         let scratch = Scratch::new();
 
-        let out = run(env(&scratch, &pki, port, "seeder-caller", REGISTRY), args).await;
+        let out = run(
+            env(&scratch, &pki, port, "seeder-caller", REGISTRY).await,
+            args,
+        )
+        .await;
 
         assert!(!out.status.success(), "{args:?}: {}", text(&out));
         assert!(text(&out).contains("usage"), "{}", text(&out));

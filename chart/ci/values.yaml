@@ -7,16 +7,33 @@
 #
 # Two roots, the second carrying ledger 1244's option B (`estate/smoke`, a
 # two-segment path under the root `estate`).
+#
+# TEAMS ARE REQUIRED (team access stage 12): the declaration names the team
+# `administrators` with a fixed test uuidv7, every root grants it readWrite,
+# `allowMassRevoke` is set, and `iam.tls.caSecret` names iam's authority.
 project:
   tls:
     caSecret: project-tls
     clientCertSecret: seeder-client-tls
+iam:
+  tls:
+    caSecret: iam-tls
 registry:
+  teams:
+    - name: administrators
+      members:
+        - 01900000-0000-7000-8000-000000000001
   roots:
     - path: yadgarhq
       sourceRepo: yadgarhq/argocd
+      grants:
+        - team: administrators
+          level: readWrite
     - path: estate
       sourceRepo: yadgarhq/estate
+      grants:
+        - team: administrators
+          level: readWrite
   projects:
     - path: yadgarhq/gateway
       displayName: gateway
@@ -24,3 +41,4 @@ registry:
     - path: estate/smoke
       sourceRepo: yadgarhq/estate
   allowMassArchive: false
+  allowMassRevoke: false

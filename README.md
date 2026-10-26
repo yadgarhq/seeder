@@ -52,10 +52,12 @@ When `registry.teams` is declared, the run has one more step before step 3:
    a cold install (flow F2): exit 0, and the log says the bootstrap
    `create-user` is expected next.
 
-With `registry.teams` absent or empty, no `grants` key may appear, the seeder
-makes no `SyncTeams` call, and the run is what it was before team access. The
-`iam.*` chart values and the `IAM_*` variables exist only when teams are
-declared. `iam.tls.caSecret` has no default.
+`registry.teams` is required. A declaration with `teams` absent or empty is
+refused, naming the key, before any call: the chart refuses it at render and the
+seeder refuses it at boot. This is a breaking change for a declaration that
+omitted `teams` (plans/team-access.md stage 12 removed the transition rule). The
+`iam.*` chart values and the `IAM_*` variables are always rendered.
+`iam.tls.caSecret` has no default.
 
 It never dials `project-db` or `iam-db` (ADR-0936, ADR-0938). It serves no RPC.
 

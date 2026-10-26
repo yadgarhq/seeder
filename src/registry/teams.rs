@@ -1,10 +1,9 @@
 //! Teams, members and grants of the declaration (plans/team-access.md §2).
 //!
-//! **THE TRANSITION RULE LIVES HERE.** With `teams` absent or empty no `grants`
-//! key may appear anywhere, the result declares no team, and the caller makes no
-//! `SyncTeams` call. An ADR-0946 auto-pin can bring this seeder to a cluster
-//! whose GitOps repository declares no team yet, and that run must behave like
-//! the seeder before team access.
+//! **`teams` IS REQUIRED.** The transition rule, which let a declaration omit
+//! `teams`, is removed (plans/team-access.md stage 12): `registry::validate`
+//! refuses an absent or empty `teams` before this module runs, so `check` always
+//! receives at least one team.
 //!
 //! **THE ADMINISTRATORS RULE, MADE MECHANICAL (ADR-0962 ruling 5).** With teams
 //! declared, a team named `administrators` exists with at least one member, and
@@ -77,15 +76,12 @@ pub(super) fn wire_grant(g: &Grant) -> DeclaredGrant {
 }
 
 /// Check every team, member and grant, and return the teams in the iam
-/// contract's element type. `Ok(vec![])` is the transition rule.
+/// contract's element type. `teams` is non-empty (the caller refuses otherwise).
 pub(super) fn check(
     teams: &[Team],
     roots: &[Entry],
     projects: &[Entry],
 ) -> Result<Vec<DeclaredTeam>, RegistryError> {
-    if teams.is_empty() {
-        return no_grants_without_teams(roots, projects).map(|()| Vec::new());
-    }
     let names = team_names(teams)?;
     administrators(teams)?;
     for (list, entries) in [("roots", roots), ("projects", projects)] {
@@ -108,20 +104,6 @@ pub(super) fn check(
         }
     }
     Ok(teams.iter().map(wire_team).collect())
-}
-
-fn no_grants_without_teams(roots: &[Entry], projects: &[Entry]) -> Result<(), RegistryError> {
-    for (list, entries) in [("roots", roots), ("projects", projects)] {
-        if let Some(e) = entries.iter().find(|e| !e.grants.is_empty()) {
-            return Err(invalid(format!(
-                "registry.{list}[].grants is set on {:?} while `registry.teams` is absent or \
-                 empty. A grant names a declared team: declare the teams, or remove every \
-                 `grants` key (the transition rule, plans/team-access.md §2)",
-                e.path
-            )));
-        }
-    }
-    Ok(())
 }
 
 /// Each name's grammar and uniqueness. Returns the set of names.

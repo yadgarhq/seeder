@@ -28,13 +28,20 @@ CHART = Path(__file__).resolve().parents[2] / "chart"
 
 TLS = {"caSecret": "project-tls", "clientCertSecret": "seeder-client-tls"}
 
+# THE BASE DECLARATION NAMES ITS TEAMS: stage 12 removed the transition rule, so
+# a declaration without `teams` is refused (`test_teams.py`). Every root grants
+# `administrators` readWrite, and `allowMassRevoke` is set.
+ADMIN_GRANT = {"team": "administrators", "level": "readWrite"}
+
 REGISTRY = {
-    "roots": [{"path": "yadgarhq", "sourceRepo": "yadgarhq/argocd"}],
+    "roots": [{"path": "yadgarhq", "sourceRepo": "yadgarhq/argocd", "grants": [dict(ADMIN_GRANT)]}],
     "projects": [
         {"path": "yadgarhq/gateway", "displayName": "gateway", "sourceRepo": "yadgarhq/gateway"},
         {"path": "yadgarhq/project-db", "sourceRepo": "yadgarhq/project-db"},
     ],
+    "teams": [{"name": "administrators", "members": ["0192f3c4-aaaa-7bbb-8ccc-0123456789ab"]}],
     "allowMassArchive": False,
+    "allowMassRevoke": False,
 }
 
 
@@ -56,7 +63,7 @@ def render(values: dict | None) -> subprocess.CompletedProcess[str]:
 
 
 def values(registry: dict | None = None, **overrides: object) -> dict:
-    out: dict = {"project": {"tls": dict(TLS)}}
+    out: dict = {"project": {"tls": dict(TLS)}, "iam": {"tls": {"caSecret": "iam-tls"}}}
     if registry is not None:
         out["registry"] = registry
     out.update(overrides)
@@ -97,12 +104,31 @@ def test_two_projects_render_a_configmap_carrying_both_and_a_job_mounting_it() -
     assert cm["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"] == "1"
     doc = json.loads(cm["data"]["registry.json"])
     assert doc == {
-        "roots": [{"path": "yadgarhq", "displayName": "", "sourceRepo": "yadgarhq/argocd"}],
-        "projects": [
-            {"path": "yadgarhq/gateway", "displayName": "gateway", "sourceRepo": "yadgarhq/gateway"},
-            {"path": "yadgarhq/project-db", "displayName": "", "sourceRepo": "yadgarhq/project-db"},
+        "roots": [
+            {
+                "path": "yadgarhq",
+                "displayName": "",
+                "sourceRepo": "yadgarhq/argocd",
+                "grants": [ADMIN_GRANT],
+            }
         ],
+        "projects": [
+            {
+                "path": "yadgarhq/gateway",
+                "displayName": "gateway",
+                "sourceRepo": "yadgarhq/gateway",
+                "grants": [],
+            },
+            {
+                "path": "yadgarhq/project-db",
+                "displayName": "",
+                "sourceRepo": "yadgarhq/project-db",
+                "grants": [],
+            },
+        ],
+        "teams": REGISTRY["teams"],
         "allowMassArchive": False,
+        "allowMassRevoke": False,
     }
 
     job = kinds["Job"]
@@ -166,7 +192,7 @@ def test_every_binary_knob_is_rendered() -> None:
 
 def test_ledger_1244_option_b_renders() -> None:
     r = copy.deepcopy(REGISTRY)
-    r["roots"].append({"path": "estate", "sourceRepo": "yadgarhq/estate"})
+    r["roots"].append({"path": "estate", "sourceRepo": "yadgarhq/estate", "grants": [dict(ADMIN_GRANT)]})
     r["projects"].append({"path": "estate/smoke", "sourceRepo": "yadgarhq/estate"})
     doc = json.loads(rendered(values(r))["ConfigMap"]["data"]["registry.json"])
     assert [x["path"] for x in doc["roots"]] == ["yadgarhq", "estate"]
