@@ -135,28 +135,51 @@ fn red_03_a_grant_naming_an_undeclared_team_is_refused_naming_the_path_and_the_t
     refused(&text, "ghosts");
 }
 
-/// Red 4.
+/// A needle unique to the stage 12 refusal. Main's older refusals for the same
+/// inputs also say "registry.teams", so that key alone proves nothing.
+const NEW: &str = "A declaration names its teams";
+
+/// Stage 12, the CLEAN empty case: `teams: []` with no grants and no
+/// `allowMassRevoke`. Main accepted it (the transition rule); no other check
+/// refuses it, so only the new refusal can make this pass.
 #[test]
-fn red_04_a_grant_while_teams_is_empty_is_refused_naming_the_path() {
-    refused(&doc("", admin_grant(), ""), "yadgarhq");
-    refused(&doc("", admin_grant(), ""), "grants");
-    let on_project = doc("", "", admin_grant());
-    refused(&on_project, "yadgarhq/gateway");
+fn stage_12_a_clean_empty_teams_list_is_refused() {
+    let clean = r#"{
+      "roots": [{"path": "yadgarhq", "displayName": "", "sourceRepo": "yadgarhq/argocd"}],
+      "projects": [],
+      "teams": [],
+      "allowMassArchive": false
+    }"#;
+    refused(clean, NEW);
+    refused(clean, "absent or empty");
 }
 
-/// The transition rule at the parser: `teams` and every `grants` key absent is
-/// the document today's chart renders, and it declares no team.
+/// Stage 12: the transition rule is gone. A declaration without `teams` is
+/// refused, and the refusal names the key `teams`. Nothing is dialled because
+/// the parser runs before the dial.
 #[test]
-fn teams_absent_is_the_transition_rule_and_declares_nothing() {
-    let today = r#"{
+fn stage_12_teams_absent_is_refused_naming_the_key() {
+    let without_teams = r#"{
       "roots": [{"path": "yadgarhq", "displayName": "", "sourceRepo": "yadgarhq/argocd"}],
       "projects": [],
       "allowMassArchive": false
     }"#;
-    let d = ok(today);
-    assert!(d.teams.is_empty());
-    assert!(d.roots[0].grants.is_empty());
-    assert!(!d.allow_mass_revoke);
+    refused(without_teams, NEW);
+    refused(without_teams, "absent");
+}
+
+/// Stage 12: an empty list is the same declaration as an absent one.
+#[test]
+fn stage_12_teams_empty_is_refused_naming_the_key() {
+    refused(&doc("", admin_grant(), ""), NEW);
+    let empty = r#"{
+      "roots": [{"path": "yadgarhq", "displayName": "", "sourceRepo": "yadgarhq/argocd"}],
+      "projects": [],
+      "teams": [],
+      "allowMassArchive": false,
+      "allowMassRevoke": false
+    }"#;
+    refused(empty, NEW);
 }
 
 /// Red 11.
@@ -280,12 +303,12 @@ fn a_local_path_still_cannot_carry_a_grant() {
     refused(&text, "local");
 }
 
-/// THE MASS-REVOKE HOLE, CLOSED. With `teams` absent every grant set on the wire
-/// is empty, which is exactly the shape that deletes every stored grant, so the
+/// THE MASS-REVOKE HOLE, CLOSED (now doubly: `teams` is required). A declaration
+/// without `teams` would send empty grant sets, the shape that deletes every stored grant, so the
 /// flag that lifts the store's guard must not ride along. The chart renders no
-/// `allowMassRevoke` without teams; a hand-edited ConfigMap that carries one is
-/// refused by name, `true` and `false` alike, as the seeder before team access
-/// refused the unknown key.
+/// `allowMassRevoke` without teams (it refuses the render); a hand-edited ConfigMap carrying one is
+/// refused, `true` and `false` alike, naming `registry.teams` (the stage 12 refusal) and
+/// `registry.allowMassRevoke`.
 #[test]
 fn allow_mass_revoke_without_teams_is_refused_by_name() {
     for flag in ["true", "false"] {

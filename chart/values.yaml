@@ -53,12 +53,10 @@ project:
     # `project.host`. Empty: verify against the host.
     domain: ""
 
-# THE SECOND UPSTREAM, USED ONLY WHEN `registry.teams` IS DECLARED
-# (plans/team-access.md stage 6): the seeder's `SyncTeams` goes to `iam`, then
-# `SyncProjects` to `project`. NEVER `iam-db` (ADR-0938). With `teams` absent the
-# Job renders no `IAM_*` variable and mounts no iam authority, so today's
-# installs render and run exactly as before; `iam.tls.caSecret` has no default
-# (ADR-0854) and is required only when teams are declared. The seeder presents
+# THE SECOND UPSTREAM, USED ON EVERY RUN (`registry.teams` is required, plans/
+# team-access.md stage 12): the seeder's `SyncTeams` goes to `iam`, then
+# `SyncProjects` to `project`. NEVER `iam-db` (ADR-0938). `iam.tls.caSecret` has
+# no default (ADR-0854) and is required. The seeder presents
 # the SAME client leaf to iam as to project (`project.tls.clientCertSecret`,
 # `seeder-client-tls`): iam admits SyncTeams from the leaf `seeder-caller`, so
 # no second leaf exists.
@@ -72,7 +70,7 @@ iam:
   # iam-db, for the same reason project's is above project-db's.
   requestTimeoutSeconds: 45
   tls:
-    # REQUIRED WHEN TEAMS ARE DECLARED, WITH NO DEFAULT (ADR-0854): the Secret
+    # REQUIRED, WITH NO DEFAULT (ADR-0854; teams are required): the Secret
     # holding the authority that signed iam's serving certificate. The estate's
     # is `iam-tls`.
     #
@@ -88,7 +86,7 @@ iam:
 sync:
   # Total attempts, the first included, FOR EACH CALL. 10 x (45 s + 6 s) = 510 s
   # worst case per call, which `job.activeDeadlineSeconds` must cover (a render
-  # check holds that: both calls when teams are declared, one when not).
+  # check holds that: both calls).
   attempts: 10
   # At least yadgar-dial's 5 s re-resolve interval, so a retry can see an
   # endpoint set the failed attempt could not.
@@ -125,10 +123,8 @@ job:
 #   # that would archive more than half of the active org rows is refused.
 #   allowMassArchive: false
 #
-#   # TEAM ACCESS (plans/team-access.md §2). OPTIONAL AS A BLOCK, all or nothing:
-#   # with `teams` absent or empty no `grants` key may appear anywhere and the
-#   # seeder makes no SyncTeams call (the transition rule). With `teams`
-#   # declared: a team `administrators` with at least one member (the chart
+#   # TEAM ACCESS (plans/team-access.md §2). REQUIRED (stage 12): `teams` absent
+#   # or empty is refused, naming the key. `teams` declares: a team `administrators` with at least one member (the chart
 #   # schema), every root granting it readWrite, names unique, every grant
 #   # naming a declared team, `allowMassRevoke` set explicitly (no default;
 #   # false keeps the store's mass-revoke guard on), and `iam.tls.caSecret` set.

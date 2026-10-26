@@ -77,38 +77,44 @@ def env_of(v: dict) -> dict[str, str]:
     return {e["name"]: e["value"] for e in job["spec"]["template"]["spec"]["containers"][0]["env"]}
 
 
-# --- red 5, chart half: teams absent renders what it rendered before --------
+# --- stage 12: teams absent is refused, naming the key ----------------------
 
 
-def test_red_05_teams_absent_renders_no_team_key_and_no_iam_wiring() -> None:
-    kinds = rendered(values(REGISTRY))
-    doc = json.loads(kinds["ConfigMap"]["data"]["registry.json"])
-    assert set(doc) == {"roots", "projects", "allowMassArchive"}
-    assert all("grants" not in e for e in doc["roots"] + doc["projects"])
-    pod = kinds["Job"]["spec"]["template"]["spec"]
-    env = {e["name"] for e in pod["containers"][0]["env"]}
-    assert not [k for k in env if k.startswith("IAM_")], env
-    assert "iam-ca" not in {v["name"] for v in pod["volumes"]}
+# A needle unique to the stage 12 refusal: main's older messages for the same
+# inputs also say "registry.teams".
+NEW = "A declaration names its teams"
 
 
-def test_red_05_an_empty_teams_list_is_the_transition_rule_too() -> None:
-    r = copy.deepcopy(REGISTRY)
+def without_teams(r: dict) -> dict:
+    """`r` as the transition rule allowed it: no `teams`, no `allowMassRevoke`,
+    no `grants`."""
+    r = copy.deepcopy(r)
+    for key in ("teams", "allowMassRevoke"):
+        r.pop(key, None)
+    for entry in r["roots"] + r["projects"]:
+        entry.pop("grants", None)
+    return r
+
+
+def test_stage_12_teams_absent_is_refused_naming_the_key() -> None:
+    refuses(values(without_teams(REGISTRY)), NEW)
+
+
+def test_stage_12_an_empty_teams_list_is_refused_naming_the_key() -> None:
+    r = without_teams(REGISTRY)
     r["teams"] = []
-    doc = json.loads(rendered(values(r))["ConfigMap"]["data"]["registry.json"])
-    assert "teams" not in doc and "allowMassRevoke" not in doc
+    refuses(values(r), NEW)
 
 
-def test_red_04_a_grant_while_teams_is_absent_is_refused_naming_the_row() -> None:
-    r = copy.deepcopy(REGISTRY)
+def test_stage_12_a_grant_while_teams_is_absent_is_refused_naming_the_key() -> None:
+    r = without_teams(REGISTRY)
     r["roots"][0]["grants"] = [{"team": "administrators", "level": "readWrite"}]
-    refuses(values(r), "registry.roots[0].grants")
+    refuses(values(r), NEW)
 
 
-def test_red_04_a_grant_while_teams_is_empty_is_refused_naming_the_row() -> None:
-    r = copy.deepcopy(REGISTRY)
-    r["teams"] = []
-    r["projects"][0]["grants"] = [{"team": "administrators", "level": "read"}]
-    refuses(values(r), "registry.projects[0].grants")
+def test_stage_12_the_chart_ci_fixture_declares_teams() -> None:
+    fixture = yaml.safe_load((CHART / "ci" / "values.yaml").read_text())
+    assert fixture["registry"]["teams"], "the fixture every shared gate renders must declare teams"
 
 
 # --- the rendered declaration and the Job wiring ----------------------------
@@ -166,7 +172,9 @@ def only_teams(teams: list[dict] | None) -> dict:
     only when `administrators` is declared, so no render check but the schema
     has a reason to refuse the three poisoned cases."""
     r = copy.deepcopy(REGISTRY)
+    r.pop("teams")
     r["allowMassRevoke"] = False
+    r["roots"][0].pop("grants")
     if teams is not None:
         r["teams"] = teams
     if any(t.get("name") == "administrators" for t in teams or []):
@@ -191,8 +199,10 @@ def test_red_12_administrators_with_members_absent_is_refused_by_the_schema() ->
     refuses_any(only_teams(CASE_ABSENT_MEMBERS), SCHEMA_TEAMS_REFUSALS)
 
 
-def test_red_12_teams_absent_renders() -> None:
-    assert "Job" in rendered(only_teams(None))
+def test_red_12_teams_absent_is_refused_by_the_render_check() -> None:
+    """The transition rule is gone (stage 12): the schema lets an absent `teams`
+    through, and `render-checks.yaml` refuses it naming the key."""
+    refuses(only_teams(None), NEW)
 
 
 def chart_without_the_rule(tmp: Path) -> Path:
@@ -343,11 +353,6 @@ def test_a_deadline_that_covers_one_call_but_not_two_refuses_once_teams_are_decl
     # One call: 10 x (45 + 6) = 510. Two calls: 1020.
     v = team_values(job={"activeDeadlineSeconds": 600, "backoffLimit": 2})
     refuses(v, "job.activeDeadlineSeconds (600) is shorter than the retry loop")
-
-
-def test_the_same_deadline_is_fine_while_teams_are_absent() -> None:
-    v = values(REGISTRY, job={"activeDeadlineSeconds": 600, "backoffLimit": 2})
-    assert "Job" in rendered(v)
 
 
 def test_the_default_deadline_covers_both_calls_at_the_default_knobs() -> None:

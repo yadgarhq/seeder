@@ -19,8 +19,8 @@ pub struct Judgement {
 }
 
 /// Judge the answers. `grants_sent` is the number of grants the seeder put on
-/// the wire; `teams` is `None` when `SyncTeams` was not called (the transition
-/// rule).
+/// the wire; `teams` is `None` when `SyncTeams` was not called. The binary
+/// always calls it (stage 12); `None` stays for the unit tests of the grant echo.
 pub fn judge(
     grants_sent: u32,
     teams: Option<&SyncTeamsResponse>,

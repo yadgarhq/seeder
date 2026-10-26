@@ -104,28 +104,23 @@ key `teams` and lives in `values.schema.json` as a draft-07 `if`/`then` +
 `administrators` root grants only when `administrators` is declared, and checks
 no member COUNT. The seeder binary checks both again (`src/registry/teams.rs`).
 
-THE TRANSITION RULE: with `teams` absent or empty no `grants` key may appear on
-any row, and nothing below it runs. `seeder.hasTeams` is "true" only for a
-non-empty list.
+`teams` IS REQUIRED (plans/team-access.md stage 12; the transition rule that let
+a declaration omit it is removed). With `teams` absent or empty the render
+refuses, naming the key, so a truncated render that drops `teams` fails here and
+not at the seeder Job. `seeder.hasTeams` is "true" only for a non-empty list.
 */}}
 {{- if and (hasKey $r "teams") $r.teams (not (kindIs "slice" $r.teams)) }}
-{{- fail "registry.teams must be a list of {name, members} maps. It may be absent or empty (then no `grants` key may appear anywhere and the seeder makes no SyncTeams call)" }}
+{{- fail "registry.teams must be a list of {name, members} maps" }}
 {{- end }}
 {{- $hasTeams := eq (include "seeder.hasTeams" .) "true" }}
 {{- if not $hasTeams }}
-{{- range $list := list "roots" "projects" }}
-{{- range $i, $e := get $r $list }}
-{{- if $e.grants }}
-{{- fail (printf "registry.%s[%d].grants is set on %q while registry.teams is absent or empty. A grant names a declared team: declare registry.teams, or remove every `grants` key (the transition rule, plans/team-access.md §2)" $list $i $e.path) }}
+{{- fail "registry.teams is absent or empty. A declaration names its teams (ADR-0962 ruling 5): declare registry.teams with the team `administrators` and at least one member, every root granting it readWrite, and registry.allowMassRevoke (plans/team-access.md stage 12 removed the transition rule that let a declaration omit it)" }}
 {{- end }}
-{{- end }}
-{{- end }}
-{{- else }}
 {{- if not (and (hasKey $r "allowMassRevoke") (kindIs "bool" $r.allowMassRevoke)) }}
-{{- fail "registry.allowMassRevoke must be set to true or false once registry.teams is declared. It has no default (ADR-0963 (6)): false keeps the store's mass-revoke guard on, and true lets ONE sync delete more than half of the stored grants" }}
+{{- fail "registry.allowMassRevoke must be set to true or false (registry.teams is required). It has no default (ADR-0963 (6)): false keeps the store's mass-revoke guard on, and true lets ONE sync delete more than half of the stored grants" }}
 {{- end }}
 {{- if not (($.Values.iam | default dict).tls | default dict).caSecret }}
-{{- fail "iam.tls.caSecret must name the Secret holding the authority that signed iam's serving certificate (the estate's is `iam-tls`) once registry.teams is declared. It has no default (ADR-0854): the seeder dials iam for SyncTeams, and presents the same client leaf as to project" }}
+{{- fail "iam.tls.caSecret must name the Secret holding the authority that signed iam's serving certificate (the estate's is `iam-tls`); registry.teams is required, so iam is always dialled. It has no default (ADR-0854): the seeder dials iam for SyncTeams, and presents the same client leaf as to project" }}
 {{- end }}
 {{- $names := dict }}
 {{- range $i, $t := $r.teams }}
@@ -194,7 +189,6 @@ non-empty list.
 {{- end }}
 {{- end }}
 {{- end }}
-{{- end }}
 
 {{- /*
 THE SIZE GUARD (ADR-0705), below the 1 MiB a ConfigMap holds. The binary
@@ -224,8 +218,8 @@ THE JOB'S DEADLINE MUST OUTLAST THE RETRY LOOPS, or Kubernetes kills a run that
 was still allowed to wait. One loop's worst case is every attempt timing out:
 attempts x (requestTimeoutSeconds + backoffSeconds). A run that declares teams
 makes TWO calls in sequence, SyncTeams to iam and then SyncProjects to project,
-each with its own loop, so the bound is their sum; without teams it is
-project's alone.
+each with its own loop, so the bound is their sum (`teams` is required, so
+every run makes both calls).
 */}}
 {{- $loop := mul (int .Values.sync.attempts) (add (int .Values.project.requestTimeoutSeconds) (int .Values.sync.backoffSeconds)) }}
 {{- if $hasTeams }}

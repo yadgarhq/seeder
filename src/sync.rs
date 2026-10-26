@@ -29,8 +29,8 @@ use crate::registry::Declaration;
 /// The request for one sync.
 ///
 /// `allow_mass_revoke` is set from the declaration, which is `false` unless
-/// `registry.teams` is declared and the flag is explicitly `true`. With teams
-/// absent the request is what it was before team access: no grant, flag unset.
+/// the flag is explicitly `true` (`registry.teams` is required, stage 12). The
+/// request always carries the declared grants.
 ///
 /// **EVERY FIELD IS SET BY NAME AND NONE BY `..Default::default()`.** The
 /// seeder vendors the contract at the SAME tag `project` vendors

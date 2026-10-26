@@ -209,6 +209,16 @@ impl ProjectService for Fake {
     ) -> Result<Response<pb::ProjectServiceSyncProjectsResponse>, Status> {
         self.order.push("SyncProjects");
         let caller = yadgar_lifecycle::serve_tls::caller_common_name(&request);
+        // Every declaration names teams (stage 12), so every request carries
+        // grants. An unscripted answer echoes the count it was sent, as a
+        // `project` that vendors grants does.
+        let sent: usize = request
+            .get_ref()
+            .roots
+            .iter()
+            .chain(&request.get_ref().projects)
+            .map(|p| p.grants.len())
+            .sum();
         self.received.lock().unwrap().push(Received {
             caller: caller.clone(),
             request: request.into_inner(),
@@ -221,7 +231,8 @@ impl ProjectService for Fake {
         }
         let mut script = self.script.lock().unwrap();
         if script.is_empty() {
-            return Ok(Response::new(counts(0, 0, 0, 0, 0)));
+            let echoed = u32::try_from(sent).unwrap_or(u32::MAX);
+            return Ok(Response::new(counts_with_grants(echoed)));
         }
         script.remove(0).map(Response::new)
     }
@@ -312,7 +323,19 @@ pub fn env_iam(
     iam_port: u16,
     registry: &str,
 ) -> Vec<(String, String)> {
-    let mut vars = env(scratch, pki, port, "seeder-caller", registry);
+    env_iam_as(scratch, pki, port, iam_port, "seeder-caller", registry)
+}
+
+/// [`env_iam`] with the client leaf named `common_name`.
+pub fn env_iam_as(
+    scratch: &Scratch,
+    pki: &Pki,
+    port: u16,
+    iam_port: u16,
+    common_name: &str,
+    registry: &str,
+) -> Vec<(String, String)> {
+    let mut vars = env(scratch, pki, port, common_name, registry);
     let ca = scratch.path().join("ca.pem").display().to_string();
     vars.extend(
         [

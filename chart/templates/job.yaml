@@ -70,7 +70,7 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- if eq (include "seeder.hasTeams" .) "true" }}
-            # THE SECOND UPSTREAM, only when teams are declared: iam's SyncTeams
+            # THE SECOND UPSTREAM, on every run (teams are required): iam's SyncTeams
             # (never iam-db, ADR-0938). The client leaf is the one above.
             - name: IAM_HOST
               value: {{ required "iam.host names iam's headless Service; see the chart's values.yaml" .Values.iam.host | quote }}
@@ -129,7 +129,7 @@ spec:
               - key: {{ required "project.tls.caSecretKey names the key inside project.tls.caSecret that holds the CA bundle; see the chart's values.yaml" .Values.project.tls.caSecretKey | quote }}
                 path: ca.pem
         {{- if eq (include "seeder.hasTeams" .) "true" }}
-        # Only when teams are declared; iam's authority, never required otherwise.
+        # iam's authority, mounted on every run (teams are required).
         - name: iam-ca
           secret:
             secretName: {{ .Values.iam.tls.caSecret }}

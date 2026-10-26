@@ -44,9 +44,7 @@ struct Entry {
     path: String,
     display_name: String,
     source_repo: String,
-    /// Absent is empty: only the transition rule leaves it out
-    /// (plans/team-access.md §2), and `teams::check` refuses a non-empty list
-    /// while no team is declared.
+    /// Absent is empty: a row that grants nothing may leave the key out.
     #[serde(default)]
     grants: Vec<teams::Grant>,
 }
@@ -58,12 +56,11 @@ struct Document {
     roots: Vec<Entry>,
     projects: Vec<Entry>,
     allow_mass_archive: bool,
-    /// Absent is the transition rule (`teams` empty), see `teams.rs`.
-    #[serde(default)]
-    teams: Vec<teams::Team>,
-    /// REQUIRED once `teams` is non-empty, and REFUSED while it is empty
-    /// (both checked in `validate`): without teams the wire carries empty grant
-    /// sets, and the flag must not lift the guard over them.
+    /// REQUIRED and non-empty (team access stage 12). `Option` only so that an
+    /// absent key is refused by `validate` with a sentence naming it, not by
+    /// serde's "missing field".
+    teams: Option<Vec<teams::Team>>,
+    /// REQUIRED, with no default (ADR-0963 (6)): checked in `validate`.
     allow_mass_revoke: Option<bool>,
 }
 
@@ -75,8 +72,8 @@ pub struct Declaration {
     /// ADR-0939's flag. `false` is the guard ON. Read only from the explicit
     /// `registry.allowMassArchive` value; there is no other source.
     pub allow_mass_archive: bool,
-    /// The declared teams, in the iam contract's element type. Empty means the
-    /// transition rule (plans/team-access.md §2): no `SyncTeams` call is made.
+    /// The declared teams, in the iam contract's element type. Never empty:
+    /// a declaration without teams is refused (plans/team-access.md stage 12).
     pub teams: Vec<DeclaredTeam>,
     /// ADR-0963 (6)'s flag. `false` is the guard ON.
     pub allow_mass_revoke: bool,
@@ -135,6 +132,18 @@ pub fn parse(bytes: &[u8]) -> Result<Declaration, RegistryError> {
 
 /// The whole declaration, or nothing — the order the store checks in.
 fn validate(doc: Document) -> Result<Declaration, RegistryError> {
+    let declared_teams = match doc.teams.as_deref() {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            return Err(invalid(
+                "registry.teams is absent or empty. A declaration names its teams (ADR-0962 \
+                 ruling 5): declare registry.teams with the team \"administrators\", every \
+                 root granting it readWrite, and registry.allowMassRevoke. The transition rule \
+                 that let a declaration omit `teams` is removed (plans/team-access.md stage 12)"
+                    .to_string(),
+            ))
+        }
+    };
     if doc.roots.is_empty() {
         return Err(invalid(
             "a declaration names at least one root: the namespace anchors every project sits \
@@ -179,28 +188,14 @@ fn validate(doc: Document) -> Result<Declaration, RegistryError> {
             )));
         }
     }
-    let wire_teams = teams::check(&doc.teams, &doc.roots, &doc.projects)?;
-    let allow_mass_revoke = match (wire_teams.is_empty(), doc.allow_mass_revoke) {
-        (false, None) => {
-            return Err(invalid(
-                "registry.allowMassRevoke must be set to true or false once registry.teams is \
-                 declared. It has no default (ADR-0963 (6)): false keeps the store's mass-revoke \
-                 guard on, and true lets ONE sync delete more than half of the stored grants"
-                    .to_string(),
-            ))
-        }
-        (true, Some(_)) => {
-            return Err(invalid(
-                "registry.allowMassRevoke is set while registry.teams is absent or empty. Without \
-                 teams every grant set sent is empty, the shape that deletes every stored grant, so \
-                 the flag that lifts the store's mass-revoke guard (ADR-0963 (6)) is refused here. \
-                 The chart renders it only with teams declared (the transition rule, \
-                 plans/team-access.md §2)"
-                    .to_string(),
-            ))
-        }
-        (false, Some(flag)) => flag,
-        (true, None) => false,
+    let wire_teams = teams::check(declared_teams, &doc.roots, &doc.projects)?;
+    let Some(allow_mass_revoke) = doc.allow_mass_revoke else {
+        return Err(invalid(
+            "registry.allowMassRevoke must be set to true or false. It has no default (ADR-0963 \
+             (6)): false keeps the store's mass-revoke guard on, and true lets ONE sync delete \
+             more than half of the stored grants"
+                .to_string(),
+        ));
     };
     Ok(Declaration {
         roots: doc.roots.into_iter().map(declared).collect(),

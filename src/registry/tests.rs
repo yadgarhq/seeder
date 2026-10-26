@@ -2,11 +2,12 @@ use super::{parse, Declaration, RegistryError, MAX_BYTES};
 
 /// A well-formed declaration: one root, two projects, the guard on.
 const GOOD: &str = r#"{
-  "roots": [{"path": "yadgarhq", "displayName": "", "sourceRepo": "yadgarhq/argocd"}],
+  "roots": [{"path": "yadgarhq", "displayName": "", "sourceRepo": "yadgarhq/argocd", "grants": [{"team": "administrators", "level": "readWrite"}]}],
   "projects": [
     {"path": "yadgarhq/gateway", "displayName": "gateway", "sourceRepo": "yadgarhq/gateway"},
     {"path": "yadgarhq/project-db", "displayName": "", "sourceRepo": "yadgarhq/project-db"}
   ],
+  "teams": [{"name": "administrators", "members": ["0192f3c4-aaaa-7bbb-8ccc-0123456789ab"]}], "allowMassRevoke": false,
   "allowMassArchive": false
 }"#;
 
@@ -31,11 +32,16 @@ fn refused(text: &str, needle: &str) {
 
 /// The declaration with `roots` and `projects` replaced.
 fn with(roots: &str, projects: &str) -> String {
-    format!(r#"{{"roots": {roots}, "projects": {projects}, "allowMassArchive": false}}"#)
+    format!(r#"{{"roots": {roots}, "projects": {projects}, {TEAMS}, "allowMassArchive": false}}"#)
 }
 
+/// The `teams` and `allowMassRevoke` keys every declaration carries (stage 12).
+const TEAMS: &str = r#""teams": [{"name": "administrators", "members": ["0192f3c4-aaaa-7bbb-8ccc-0123456789ab"]}], "allowMassRevoke": false"#;
+
 fn entry(path: &str) -> String {
-    format!(r#"{{"path": "{path}", "displayName": "", "sourceRepo": "yadgarhq/argocd"}}"#)
+    format!(
+        r#"{{"path": "{path}", "displayName": "", "sourceRepo": "yadgarhq/argocd", "grants": [{{"team": "administrators", "level": "readWrite"}}]}}"#
+    )
 }
 
 #[test]
@@ -101,7 +107,10 @@ fn an_unknown_key_is_refused() {
 #[test]
 fn an_absent_mass_archive_flag_is_refused() {
     refused(
-        &format!(r#"{{"roots": [{}], "projects": []}}"#, entry("yadgarhq")),
+        &format!(
+            r#"{{"roots": [{}], "projects": [], {TEAMS}}}"#,
+            entry("yadgarhq")
+        ),
         "allowMassArchive",
     );
 }
@@ -280,7 +289,7 @@ fn a_display_name_exactly_at_the_column_width_is_accepted() {
     let wide = "x".repeat(255);
     ok(&with(
         &format!(
-            r#"[{{"path": "yadgarhq", "displayName": "{wide}", "sourceRepo": "yadgarhq/argocd"}}]"#
+            r#"[{{"path": "yadgarhq", "displayName": "{wide}", "sourceRepo": "yadgarhq/argocd", "grants": [{{"team": "administrators", "level": "readWrite"}}]}}]"#
         ),
         "[]",
     ));

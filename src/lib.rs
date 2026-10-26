@@ -9,8 +9,8 @@
 //! commit to the organisation's GitOps repository re-renders the Job, and that
 //! is the only trigger. There is no CronJob.
 //!
-//! **IT DIALS `project`, AND `iam` ONLY WHEN TEAMS ARE DECLARED, AND NOTHING
-//! ELSE.** No module talks to a `-db` or its engine directly (ADR-0936,
+//! **IT DIALS `project` AND `iam`, AND NOTHING ELSE.** Every declaration names
+//! teams (stage 12), so `iam` is dialled on every run. No module talks to a `-db` or its engine directly (ADR-0936,
 //! ADR-0938): `project` checks the caller and relays to `project-db`, `iam` does
 //! the same to `iam-db`. This crate has no configuration key that could name
 //! either `-db`, and `tests/config.rs` pins that.
