@@ -19,7 +19,7 @@ repos:
   # Shared, from yadgarhq/actions (D62), at the IMMUTABLE rev `project` pins:
   # pre-commit caches a rev at first install and never re-resolves it.
   - repo: https://github.com/yadgarhq/actions
-    rev: v1.44.0
+    rev: v1.45.0
     hooks:
       - id: gitleaks
       - id: prettier
