@@ -32,15 +32,15 @@ prost-types = "0.14"
 # Client-side balancing over `project`'s headless Service (D23), and the
 # request-timeout knob's range check. Pinned by tag per ADR-0526, the same tag
 # `project` pins.
-yadgar-dial = { git = "https://github.com/yadgarhq/dial.git", tag = "v0.2.20" }
+yadgar-dial = { git = "https://github.com/yadgarhq/dial.git", tag = "v0.2.29" }
 # `serve_tls::leaf_common_name`: the boot check that the mounted client leaf is
 # the seeder's (`seeder-caller`) reads the common name the same way `project`'s
 # caller check does, with the one parser the estate shares. The `serve-tls`
 # feature is the one that carries it; nothing here serves.
-yadgar-lifecycle = { git = "https://github.com/yadgarhq/lifecycle.git", tag = "v0.2.23", default-features = false, features = ["serve-tls"] }
+yadgar-lifecycle = { git = "https://github.com/yadgarhq/lifecycle.git", tag = "v0.3.5", default-features = false, features = ["serve-tls"] }
 # The estate's one error-chain walker (ADR-0591), so a refusal printed at exit
 # carries the layer below tonic's two-word `transport error`.
-yadgar-telemetry = { git = "https://github.com/yadgarhq/telemetry.git", tag = "v0.2.0" }
+yadgar-telemetry = { git = "https://github.com/yadgarhq/telemetry.git", tag = "v0.2.10" }
 # PEM decoding of the client leaf for the boot check above. Already in the lock
 # graph through rustls.
 rustls-pki-types = { version = "1", features = ["std"] }
