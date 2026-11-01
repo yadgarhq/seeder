@@ -2,7 +2,7 @@
 name = "yadgar-seeder"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.90"
+rust-version = "1.99.1"
 license = "Apache-2.0"
 description = "The D35 seeder: writes the organisation's declared registry, serving no RPC."
 
