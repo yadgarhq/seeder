@@ -1,5 +1,5 @@
 //! The knobs: every one required, none defaulted, and no key that could name
-//! anything but `project` and, once teams are declared, `iam` (plans/the-d35-seeder.md
+//! anything but `project` and `iam` (plans/the-d35-seeder.md
 //! stage 5, test 5; plans/team-access.md stage 6).
 
 use std::cell::RefCell;
@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use yadgar_seeder::config::{Config, ConfigError, KEYS};
 
-fn complete() -> Vec<(&'static str, &'static str)> {
+fn project_block() -> Vec<(&'static str, &'static str)> {
     vec![
         ("SEEDER_REGISTRY_FILE", "/etc/seeder/registry.json"),
         ("PROJECT_HOST", "project"),
@@ -28,7 +28,7 @@ fn complete() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
-/// The iam block the chart renders ONLY when `registry.teams` is declared.
+/// The iam block the chart renders on every run (`registry.teams` is required).
 fn iam() -> Vec<(&'static str, &'static str)> {
     vec![
         ("IAM_HOST", "iam"),
@@ -38,8 +38,8 @@ fn iam() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
-fn complete_with_iam() -> Vec<(&'static str, &'static str)> {
-    let mut vars = complete();
+fn complete() -> Vec<(&'static str, &'static str)> {
+    let mut vars = project_block();
     vars.extend(iam());
     vars
 }
@@ -85,7 +85,7 @@ fn a_complete_environment_is_read_verbatim() {
 #[test]
 fn the_only_upstreams_the_configuration_can_name_are_project_and_iam() {
     let asked = RefCell::new(BTreeSet::new());
-    let vars = complete_with_iam();
+    let vars = complete();
     Config::from_lookup(|k| {
         asked.borrow_mut().insert(k.to_string());
         vars.iter()
@@ -181,17 +181,20 @@ fn a_backoff_below_the_re_resolve_interval_is_refused() {
     read(&with("SEEDER_SYNC_BACKOFF_SECONDS", "5")).expect("the floor itself is legal");
 }
 
-/// Red 5's config half: with `teams` absent the chart renders no `IAM_*`, and the
-/// binary reads a complete environment without them. It dials no iam.
+/// Every declaration names teams, so the chart renders the `IAM_*` block on every
+/// run. An environment without `IAM_HOST` is refused by the config read itself,
+/// naming the variable and the chart key, never read as "no iam".
 #[test]
-fn without_iam_keys_the_config_names_no_iam() {
-    assert_eq!(read(&complete()).expect("complete").iam, None);
+fn an_absent_iam_host_is_refused_naming_the_variable_and_the_chart_key() {
+    let err = read(&without("IAM_HOST")).unwrap_err().to_string();
+    assert!(err.contains("IAM_HOST") && err.contains("NOT SET"), "{err}");
+    assert!(err.contains("iam.host"), "{err}");
 }
 
 #[test]
 fn an_iam_block_is_read_verbatim_and_reuses_the_seeders_client_leaf() {
-    let c = read(&complete_with_iam()).expect("complete with iam");
-    let iam = c.iam.expect("iam");
+    let c = read(&complete()).expect("complete with iam");
+    let iam = c.iam;
     assert_eq!(iam.host, "iam");
     assert_eq!(iam.port, 50052);
     assert_eq!(iam.request_timeout, Duration::from_secs(45));
@@ -199,18 +202,11 @@ fn an_iam_block_is_read_verbatim_and_reuses_the_seeders_client_leaf() {
     assert_eq!(iam.domain, None);
 }
 
-/// Once `IAM_HOST` names iam, every other iam key is required and names itself
-/// and the chart key that renders it.
+/// Every iam key is required and names itself and the chart key that renders it.
 #[test]
 fn every_iam_knob_refuses_when_absent_and_names_itself() {
     for (key, _) in iam() {
-        let vars: Vec<_> = complete_with_iam()
-            .into_iter()
-            .filter(|(k, _)| *k != key)
-            .collect();
-        if key == "IAM_HOST" {
-            continue; // absent IAM_HOST is "no iam", tested above.
-        }
+        let vars: Vec<_> = complete().into_iter().filter(|(k, _)| *k != key).collect();
         let err = read(&vars).expect_err(key).to_string();
         assert!(err.contains(key), "the refusal must name {key}: {err}");
         assert!(
@@ -222,7 +218,7 @@ fn every_iam_knob_refuses_when_absent_and_names_itself() {
 
 #[test]
 fn an_empty_iam_host_is_refused_not_read_as_absent() {
-    let mut vars: Vec<_> = complete_with_iam()
+    let mut vars: Vec<_> = complete()
         .into_iter()
         .filter(|(k, _)| *k != "IAM_HOST")
         .collect();
@@ -233,17 +229,17 @@ fn an_empty_iam_host_is_refused_not_read_as_absent() {
 
 #[test]
 fn the_iam_tls_domain_is_an_optional_override() {
-    let mut vars = complete_with_iam();
+    let mut vars = complete();
     vars.push(("IAM_TLS_DOMAIN", "iam.yadgar.svc"));
     let c = read(&vars).unwrap();
-    assert_eq!(c.iam.unwrap().domain.as_deref(), Some("iam.yadgar.svc"));
+    assert_eq!(c.iam.domain.as_deref(), Some("iam.yadgar.svc"));
 }
 
 /// yadgar-dial's own range: 14..=59 seconds, for iam's timeout as for project's.
 #[test]
 fn an_iam_request_timeout_outside_dial_s_range_is_refused() {
     for bad in ["0", "13", "60"] {
-        let mut vars: Vec<_> = complete_with_iam()
+        let mut vars: Vec<_> = complete()
             .into_iter()
             .filter(|(k, _)| *k != "IAM_REQUEST_TIMEOUT_SECONDS")
             .collect();

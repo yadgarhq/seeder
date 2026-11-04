@@ -33,8 +33,8 @@ fn teams(unknown: &[&str], pending: &[&str], live: u32) -> SyncTeamsResponse {
 }
 
 #[test]
-fn teams_absent_and_no_grants_is_clean() {
-    let j = judge(0, None, &projects(0));
+fn a_clean_answer_with_no_grants_is_clean() {
+    let j = judge(0, &teams(&[], &[], 1), &projects(0));
     assert!(j.failures.is_empty(), "{:?}", j.failures);
     assert!(j.pending.is_empty());
 }
@@ -42,7 +42,7 @@ fn teams_absent_and_no_grants_is_clean() {
 /// Red 6.
 #[test]
 fn red_06_a_project_that_dropped_the_grants_is_named_as_predating_grants() {
-    let j = judge(3, Some(&teams(&[], &[], 1)), &projects(0));
+    let j = judge(3, &teams(&[], &[], 1), &projects(0));
     assert_eq!(j.failures.len(), 1, "{:?}", j.failures);
     assert!(
         j.failures[0].contains("project predates grants"),
@@ -58,7 +58,7 @@ fn red_06_a_project_that_dropped_the_grants_is_named_as_predating_grants() {
 
 #[test]
 fn matching_grant_counts_are_clean() {
-    let j = judge(3, Some(&teams(&[], &[], 1)), &projects(3));
+    let j = judge(3, &teams(&[], &[], 1), &projects(3));
     assert!(j.failures.is_empty(), "{:?}", j.failures);
 }
 
@@ -66,7 +66,7 @@ fn matching_grant_counts_are_clean() {
 #[test]
 fn red_08_an_unknown_member_fails_naming_the_uuid() {
     let id = "yadgar:user:0192f3c4-aaaa-7bbb-8ccc-0123456789ab";
-    let j = judge(0, Some(&teams(&[id], &[], 1)), &projects(0));
+    let j = judge(0, &teams(&[id], &[], 1), &projects(0));
     assert_eq!(j.failures.len(), 1);
     assert!(j.failures[0].contains(id), "{:?}", j.failures);
 }
@@ -75,7 +75,7 @@ fn red_08_an_unknown_member_fails_naming_the_uuid() {
 #[test]
 fn red_09_a_pending_administrator_with_no_live_member_is_not_a_failure() {
     let id = "yadgar:user:0192f3c4-aaaa-7bbb-8ccc-0123456789ab";
-    let j = judge(1, Some(&teams(&[], &[id], 0)), &projects(1));
+    let j = judge(1, &teams(&[], &[id], 0), &projects(1));
     assert!(j.failures.is_empty(), "{:?}", j.failures);
     assert_eq!(j.pending, [id]);
 }
@@ -84,7 +84,7 @@ fn red_09_a_pending_administrator_with_no_live_member_is_not_a_failure() {
 #[test]
 fn red_10_a_pending_administrator_beside_a_live_one_is_a_failure_naming_it() {
     let id = "yadgar:user:0192f3c4-aaaa-7bbb-8ccc-0123456789ab";
-    let j = judge(1, Some(&teams(&[], &[id], 1)), &projects(1));
+    let j = judge(1, &teams(&[], &[id], 1), &projects(1));
     assert_eq!(j.failures.len(), 1);
     assert!(j.failures[0].contains(id), "{:?}", j.failures);
 }
@@ -93,6 +93,6 @@ fn red_10_a_pending_administrator_beside_a_live_one_is_a_failure_naming_it() {
 fn every_failure_is_reported_not_only_the_first() {
     let a = "yadgar:user:0192f3c4-aaaa-7bbb-8ccc-0123456789ab";
     let b = "yadgar:user:0192f3c4-bbbb-7bbb-8ccc-0123456789ab";
-    let j = judge(2, Some(&teams(&[a], &[b], 1)), &projects(0));
+    let j = judge(2, &teams(&[a], &[b], 1), &projects(0));
     assert_eq!(j.failures.len(), 3, "{:?}", j.failures);
 }

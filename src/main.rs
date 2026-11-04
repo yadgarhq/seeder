@@ -66,7 +66,6 @@ async fn run() -> Result<(), String> {
     identity::check_client_leaf(&config.tls.client_cert_file).map_err(|e| e.to_string())?;
     // ADR-0523-UNWATCHED: the declaration is read once per run; a changed ConfigMap is a new Job (ADR-0940).
     let declaration = registry::read(&config.registry_file).map_err(|e| e.to_string())?;
-    let iam = iam_for(&config)?;
     let grants_sent = grants_sent(&declaration);
     tracing::info!(
         roots = declaration.roots.len(),
@@ -81,7 +80,7 @@ async fn run() -> Result<(), String> {
     // ONE RUN IS ONE SYNC: one id on both calls (ADR-0942).
     let request_id = sync::mint_request_id();
 
-    let teams = sync_teams(&config, iam, &declaration, &request_id).await?;
+    let teams = sync_teams(&config, &config.iam, &declaration, &request_id).await?;
 
     let channel = upstream::connect(&config)
         .await
@@ -125,7 +124,7 @@ async fn run() -> Result<(), String> {
         "sync applied"
     );
 
-    let judgement = outcome::judge(grants_sent, Some(&teams), &counts);
+    let judgement = outcome::judge(grants_sent, &teams, &counts);
     for id in &judgement.pending {
         tracing::info!(
             %request_id,
@@ -141,19 +140,6 @@ async fn run() -> Result<(), String> {
     }
 }
 
-/// The iam transport every declaration needs, since every declaration names
-/// teams: a refusal naming the `iam.*` chart keys when the chart rendered no
-/// `IAM_*` block.
-fn iam_for(config: &Config) -> Result<&Iam, String> {
-    config.iam.as_ref().ok_or_else(|| {
-        "IAM_HOST is NOT SET. Every declaration names teams, so the chart renders the IAM_* \
-         variables from iam.host, iam.port, iam.requestTimeoutSeconds and iam.tls.caSecret; \
-         this run refuses rather than skip SyncTeams, which would sync grants for teams iam \
-         does not hold"
-            .to_string()
-    })
-}
-
 /// The number of grants on the wire, the figure `project` must echo back.
 fn grants_sent(declaration: &Declaration) -> u32 {
     let n: usize = declaration
@@ -165,7 +151,7 @@ fn grants_sent(declaration: &Declaration) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
-/// The first call of a run that declares teams.
+/// The first call of a run: every declaration names teams.
 async fn sync_teams(
     config: &Config,
     iam: &Iam,
