@@ -10,6 +10,15 @@ Read through `seeder.registry`, so the presence check runs first.
 {{- $r := .Values.registry -}}
 {{- $rows := dict "roots" list "projects" list -}}
 {{- range $list := list "roots" "projects" -}}
+{{- /*
+`get` returns "" for an absent key and nil for a null one, and `range` over
+either (or over a string or a map) is a Go type error. So this partial refuses a
+key that is not a list by name, and does not depend on helm rendering
+`render-checks.yaml` first. The sentence matches the one in that file.
+*/ -}}
+{{- if not (kindIs "slice" (get $r $list)) -}}
+{{- fail (printf "registry.%s must be a list (it may be empty only for projects)" $list) -}}
+{{- end -}}
 {{- $out := list -}}
 {{- range (get $r $list) -}}
 {{- $row := dict "path" .path "displayName" (.displayName | default "") "sourceRepo" .sourceRepo -}}

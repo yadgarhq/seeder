@@ -417,6 +417,41 @@ def test_the_registry_partial_refuses_an_absent_registry_by_itself(
     assert "registry is required with no default" in result.stderr, result.stderr
 
 
+# --- the partial guards `roots` and `projects` itself (yaadgaar 606) ---------
+#
+# `seeder.registryJson` reads both lists with `get`. A map with the key absent,
+# null, or of the wrong kind used to end in a Go "range can't iterate over"
+# error, masked only because helm renders `render-checks.yaml` first. Same
+# copy-without-render-checks and `--skip-schema-validation` as above.
+
+
+def without(key: str) -> dict:
+    r = copy.deepcopy(REGISTRY)
+    del r[key]
+    return r
+
+
+@pytest.mark.parametrize(
+    ("registry", "key"),
+    [
+        pytest.param({}, "roots", id="empty-map"),
+        pytest.param(without("roots"), "roots", id="roots-absent"),
+        pytest.param(dict(REGISTRY, roots=None), "roots", id="roots-null"),
+        pytest.param(dict(REGISTRY, roots="yadgarhq"), "roots", id="roots-string"),
+        pytest.param(without("projects"), "projects", id="projects-absent"),
+        pytest.param(dict(REGISTRY, projects={"path": "yadgarhq/x"}), "projects", id="projects-map"),
+    ],
+)
+def test_the_registry_partial_refuses_a_bad_list_by_itself_naming_the_key(
+    chart_without_render_checks: Path, registry: dict, key: str
+) -> None:
+    result = render_unchecked(chart_without_render_checks, dict(values(None), registry=registry))
+    assert result.returncode != 0, result.stdout
+    assert f"registry.{key} must be a list" in result.stderr, result.stderr
+    assert "can't iterate" not in result.stderr, result.stderr
+    assert "wrong type for value" not in result.stderr, result.stderr
+
+
 # --- the transition-rule helper is gone (yaadgaar 214, former 441) -----------
 
 
