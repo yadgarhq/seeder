@@ -20,7 +20,15 @@ key that is not a list by name, and does not depend on helm rendering
 {{- fail (printf "registry.%s must be a list (it may be empty only for projects)" $list) -}}
 {{- end -}}
 {{- $out := list -}}
-{{- range (get $r $list) -}}
+{{- range $i, $e := (get $r $list) -}}
+{{- /*
+A row that is a string, a number, null or a list has no `path`: reading it is a
+Go type error. So this partial refuses it by list and index; the sentence is the
+one in `render-checks.yaml`.
+*/ -}}
+{{- if not (kindIs "map" $e) -}}
+{{- fail (printf "registry.%s[%d] must be a map with path, sourceRepo and optionally displayName" $list $i) -}}
+{{- end -}}
 {{- $row := dict "path" .path "displayName" (.displayName | default "") "sourceRepo" .sourceRepo -}}
 {{- /*
 Every row carries `grants`, `[]` when it declares none, so the binary reads one

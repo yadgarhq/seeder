@@ -452,6 +452,38 @@ def test_the_registry_partial_refuses_a_bad_list_by_itself_naming_the_key(
     assert "wrong type for value" not in result.stderr, result.stderr
 
 
+# --- the partial guards each ROW of `roots` and `projects` itself (yaadgaar 613) --
+#
+# A row that is not a map (`projects: [x]`) used to end in `can't evaluate field
+# path in type interface {}` when `render-checks.yaml` was skipped. Same
+# copy-without-render-checks and `--skip-schema-validation` as above. The bad row
+# sits at index 1 in each case, behind a valid row, so the sentence must carry
+# the row index and not just the list name.
+
+
+def with_bad_row(key: str, bad: object) -> dict:
+    r = copy.deepcopy(REGISTRY)
+    r[key] = [r[key][0], bad]
+    return r
+
+
+@pytest.mark.parametrize("key", ["roots", "projects"])
+@pytest.mark.parametrize(
+    "bad",
+    [pytest.param("x", id="string"), pytest.param(7, id="int"), pytest.param(None, id="null"), pytest.param(["a"], id="list")],
+)
+def test_the_registry_partial_refuses_a_non_map_row_by_itself_naming_the_row(
+    chart_without_render_checks: Path, key: str, bad: object
+) -> None:
+    result = render_unchecked(
+        chart_without_render_checks, dict(values(None), registry=with_bad_row(key, bad))
+    )
+    assert result.returncode != 0, result.stdout
+    assert f"registry.{key}[1] must be a map" in result.stderr, result.stderr
+    assert "can't evaluate field" not in result.stderr, result.stderr
+    assert "nil pointer" not in result.stderr, result.stderr
+
+
 # --- the transition-rule helper is gone (yaadgaar 214, former 441) -----------
 
 
