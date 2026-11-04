@@ -14,9 +14,6 @@ refused before any check below runs: by the schema, or by the `required` in
 */}}
 {{- $_ := include "seeder.registry" . }}
 {{- $r := .Values.registry }}
-{{- if not (kindIs "map" $r) }}
-{{- fail "registry must be a map with `roots`, `projects` and `allowMassArchive` (plans/the-d35-seeder.md, \"The declaration\")" }}
-{{- end }}
 
 {{- /* ADR-0939: the mass-archive flag comes ONLY from an explicit value. No default. */}}
 {{- if not (and (hasKey $r "allowMassArchive") (kindIs "bool" $r.allowMassArchive)) }}
@@ -107,13 +104,12 @@ no member COUNT. The seeder binary checks both again (`src/registry/teams.rs`).
 `teams` IS REQUIRED (plans/team-access.md stage 12; the transition rule that let
 a declaration omit it is removed). With `teams` absent or empty the render
 refuses, naming the key, so a truncated render that drops `teams` fails here and
-not at the seeder Job. `seeder.hasTeams` is "true" only for a non-empty list.
+not at the seeder Job. An EMPTY list is refused like an absent one.
 */}}
 {{- if and (hasKey $r "teams") $r.teams (not (kindIs "slice" $r.teams)) }}
 {{- fail "registry.teams must be a list of {name, members} maps" }}
 {{- end }}
-{{- $hasTeams := eq (include "seeder.hasTeams" .) "true" }}
-{{- if not $hasTeams }}
+{{- if not (and (kindIs "slice" $r.teams) $r.teams) }}
 {{- fail "registry.teams is absent or empty. A declaration names its teams (ADR-0962 ruling 5): declare registry.teams with the team `administrators` and at least one member, every root granting it readWrite, and registry.allowMassRevoke (plans/team-access.md stage 12 removed the transition rule that let a declaration omit it)" }}
 {{- end }}
 {{- if not (and (hasKey $r "allowMassRevoke") (kindIs "bool" $r.allowMassRevoke)) }}
@@ -222,9 +218,7 @@ each with its own loop, so the bound is their sum (`teams` is required, so
 every run makes both calls).
 */}}
 {{- $loop := mul (int .Values.sync.attempts) (add (int .Values.project.requestTimeoutSeconds) (int .Values.sync.backoffSeconds)) }}
-{{- if $hasTeams }}
 {{- $loop = add $loop (mul (int .Values.sync.attempts) (add (int .Values.iam.requestTimeoutSeconds) (int .Values.sync.backoffSeconds))) }}
-{{- end }}
 {{- if lt (int .Values.job.activeDeadlineSeconds) (int $loop) }}
 {{- fail (printf "job.activeDeadlineSeconds (%d) is shorter than the retry loop's worst case, sync.attempts x (project.requestTimeoutSeconds + sync.backoffSeconds), plus the same for iam.requestTimeoutSeconds when registry.teams is declared = %d. Raise the deadline or shorten the loop" (int .Values.job.activeDeadlineSeconds) (int $loop)) }}
 {{- end }}

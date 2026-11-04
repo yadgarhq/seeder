@@ -361,3 +361,66 @@ def test_a_multibyte_value_over_the_character_limit_is_refused(field: str) -> No
     r = copy.deepcopy(REGISTRY)
     r["projects"][0][field] = "é" * 256
     refuses(values(r), f"registry.projects[0].{field}")
+
+
+# --- the registry partial guards itself (yaadgaar 214, former 251) ----------
+#
+# `render-checks.yaml` refuses a non-map registry first, but only because helm
+# happens to render it before `configmap.yaml`. These cases delete
+# `render-checks.yaml` from a copy of the chart, so the PARTIAL must refuse on
+# its own, with the same sentence, and never with a Go type error. The cases
+# render with the schema skipped, so they also stand for any render that
+# bypasses `values.schema.json`.
+
+
+@pytest.fixture(scope="module")
+def chart_without_render_checks(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    dest = tmp_path_factory.mktemp("chart") / "chart"
+    shutil.copytree(CHART, dest)
+    (dest / "templates" / "render-checks.yaml").unlink()
+    return dest
+
+
+def render_unchecked(chart: Path, v: dict) -> subprocess.CompletedProcess[str]:
+    helm = shutil.which("helm")
+    assert helm, "helm is not on PATH; this suite renders the chart and cannot run without it"
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        yaml.safe_dump(v, f)
+        path = f.name
+    try:
+        return subprocess.run(
+            [helm, "template", "t", str(chart), "-f", path, "--skip-schema-validation"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        Path(path).unlink()
+
+
+@pytest.mark.parametrize("bad", ["x", ["a"], 7, True])
+def test_the_registry_partial_refuses_a_non_map_by_itself(
+    chart_without_render_checks: Path, bad: object
+) -> None:
+    result = render_unchecked(chart_without_render_checks, dict(values(None), registry=bad))
+    assert result.returncode != 0, result.stdout
+    assert "registry must be a map" in result.stderr, result.stderr
+    assert "wrong type for value" not in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("v", [values(None), dict(values(None), registry=None)])
+def test_the_registry_partial_refuses_an_absent_registry_by_itself(
+    chart_without_render_checks: Path, v: dict
+) -> None:
+    result = render_unchecked(chart_without_render_checks, v)
+    assert result.returncode != 0, result.stdout
+    assert "registry is required with no default" in result.stderr, result.stderr
+
+
+# --- the transition-rule helper is gone (yaadgaar 214, former 441) -----------
+
+
+def test_no_template_keeps_the_dead_has_teams_branch() -> None:
+    """`teams` is required, so a `seeder.hasTeams` conditional is always true."""
+    offenders = [p.name for p in (CHART / "templates").iterdir() if "hasTeams" in p.read_text()]
+    assert offenders == [], f"dead hasTeams branches remain in {offenders}"

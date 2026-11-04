@@ -69,7 +69,6 @@ spec:
             - name: PROJECT_TLS_DOMAIN
               value: {{ . | quote }}
             {{- end }}
-            {{- if eq (include "seeder.hasTeams" .) "true" }}
             # THE SECOND UPSTREAM, on every run (teams are required): iam's SyncTeams
             # (never iam-db, ADR-0938). The client leaf is the one above.
             - name: IAM_HOST
@@ -83,7 +82,6 @@ spec:
             {{- with .Values.iam.tls.domain }}
             - name: IAM_TLS_DOMAIN
               value: {{ . | quote }}
-            {{- end }}
             {{- end }}
             - name: SEEDER_REGISTRY_FILE
               value: /etc/seeder/registry.json
@@ -104,11 +102,9 @@ spec:
             - name: project-ca
               mountPath: /var/run/config/project-ca
               readOnly: true
-            {{- if eq (include "seeder.hasTeams" .) "true" }}
             - name: iam-ca
               mountPath: /var/run/config/iam-ca
               readOnly: true
-            {{- end }}
             - name: client-cert
               mountPath: /var/run/secrets/client-cert
               readOnly: true
@@ -128,7 +124,6 @@ spec:
             items:
               - key: {{ required "project.tls.caSecretKey names the key inside project.tls.caSecret that holds the CA bundle; see the chart's values.yaml" .Values.project.tls.caSecretKey | quote }}
                 path: ca.pem
-        {{- if eq (include "seeder.hasTeams" .) "true" }}
         # iam's authority, mounted on every run (teams are required).
         - name: iam-ca
           secret:
@@ -136,7 +131,6 @@ spec:
             items:
               - key: {{ required "iam.tls.caSecretKey names the key inside iam.tls.caSecret that holds the CA bundle; see the chart's values.yaml" .Values.iam.tls.caSecretKey | quote }}
                 path: ca.pem
-        {{- end }}
         - name: client-cert
           secret:
             secretName: {{ .Values.project.tls.clientCertSecret }}

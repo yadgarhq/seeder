@@ -376,7 +376,7 @@ async fn teams_declared_without_iam_configuration_is_refused_before_any_dial() {
     let log = text(&out);
     assert!(!out.status.success(), "{log}");
     assert!(log.contains("IAM_HOST"), "{log}");
-    assert!(log.contains("iam.tls.caSecret"), "{log}");
+    assert!(log.contains("iam.host"), "{log}");
     assert!(project.received().is_empty());
 }
 

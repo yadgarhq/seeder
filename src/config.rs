@@ -5,10 +5,9 @@
 //!
 //! **THE ONLY UPSTREAMS ARE `project` AND `iam`.** There is no `PROJECT_DB_*`
 //! or `IAM_DB_*` key and no other host key of any kind (ADR-0936, ADR-0938: no
-//! module dials a `-db`). `iam` is dialled only when the declaration names
-//! teams (`SyncTeams`, plans/team-access.md), so the `IAM_*` block is optional AS
-//! A BLOCK: absent `IAM_HOST` means no iam, and once it is set every other
-//! `IAM_*` key but the TLS domain is required. The set of keys read is
+//! module dials a `-db`). `iam` is dialled on every run, since every declaration names
+//! teams (`SyncTeams`, plans/team-access.md), so every `IAM_*` key but the TLS
+//! domain is required, `IAM_HOST` included. The set of keys read is
 //! [`KEYS`], and `tests/config.rs` asserts it against the keys a real read
 //! actually looks up, so a key added here and not there is red.
 //!
@@ -104,9 +103,8 @@ pub struct Config {
     pub request_timeout: Duration,
     pub tls: Tls,
     pub retry: Retry,
-    /// `Some` only when the chart rendered the `IAM_*` block, which it does
-    /// only when `registry.teams` is declared.
-    pub iam: Option<Iam>,
+    /// The `IAM_*` block, which the chart renders on every run.
+    pub iam: Iam,
 }
 
 /// The transport to `iam`. The client leaf is [`Tls::client_cert_file`] and
@@ -255,13 +253,13 @@ impl Config {
             ));
         }
 
-        let iam = if lookup(IAM_HOST).is_some() {
+        let iam = {
             let host = required(IAM_HOST)?;
             let raw = required(IAM_PORT)?;
             let port: u16 = raw
                 .parse()
                 .map_err(|e| unusable(IAM_PORT, &raw, format!("not a port number: {e}")))?;
-            Some(Iam {
+            Iam {
                 host,
                 port,
                 request_timeout: yadgar_dial::request_timeout_from_lookup(
@@ -273,9 +271,7 @@ impl Config {
                 domain: lookup(IAM_TLS_DOMAIN)
                     .map(|v| v.trim().to_string())
                     .filter(|v| !v.is_empty()),
-            })
-        } else {
-            None
+            }
         };
 
         Ok(Self {
